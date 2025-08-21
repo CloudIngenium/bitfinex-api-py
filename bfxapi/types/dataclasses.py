@@ -162,37 +162,6 @@ class FundingStatistic(_Type):
 
 
 @dataclass
-class PulseProfile(_Type):
-    puid: str
-    mts: int
-    nickname: str
-    picture: str
-    text: str
-    twitter_handle: str
-    followers: int
-    following: int
-    tipping_status: int
-
-
-@dataclass
-class PulseMessage(_Type):
-    pid: str
-    mts: int
-    puid: str
-    title: str
-    content: str
-    is_pin: int
-    is_public: int
-    comments_disabled: int
-    tags: List[str]
-    attachments: List[str]
-    meta: List[Dict[str, Any]]
-    likes: int
-    profile: PulseProfile
-    comments: int
-
-
-@dataclass
 class TradingMarketAveragePrice(_Type):
     price_avg: float
     amount: float

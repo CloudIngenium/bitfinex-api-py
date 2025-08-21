@@ -15,7 +15,6 @@ from bfxapi.types import (
     Leaderboard,
     Liquidation,
     PlatformStatus,
-    PulseProfile,
     Statistic,
     TickersHistory,
     TradingMarketAveragePrice,
@@ -322,9 +321,6 @@ class RestPublicEndpoints(Interface):
         params = {"start": start, "end": end, "limit": limit}
         data = self._m.get(f"funding/stats/{symbol}/hist", params=params)
         return [serializers.FundingStatistic.parse(*sub_data) for sub_data in data]
-
-    def get_pulse_profile_details(self, nickname: str) -> PulseProfile:
-        return serializers.PulseProfile.parse(*self._m.get(f"pulse/profile/{nickname}"))
 
     def get_trading_market_average_price(
         self,

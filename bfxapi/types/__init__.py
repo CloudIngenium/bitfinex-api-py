@@ -42,8 +42,6 @@ from .dataclasses import (
     PositionIncrease,
     PositionIncreaseInfo,
     PositionSnapshot,
-    PulseMessage,
-    PulseProfile,
     Statistic,
     SymbolMarginInfo,
     TickersHistory,
