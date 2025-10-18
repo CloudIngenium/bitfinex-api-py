@@ -1,7 +1,7 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
-from .labeler import _Type, compose, partial
+from .labeler import _Type
 
 # region Dataclass definitions for types of public use
 
@@ -159,37 +159,6 @@ class FundingStatistic(_Type):
     funding_amount: float
     funding_amount_used: float
     funding_below_threshold: float
-
-
-@dataclass
-class PulseProfile(_Type):
-    puid: str
-    mts: int
-    nickname: str
-    picture: str
-    text: str
-    twitter_handle: str
-    followers: int
-    following: int
-    tipping_status: int
-
-
-@dataclass
-class PulseMessage(_Type):
-    pid: str
-    mts: int
-    puid: str
-    title: str
-    content: str
-    is_pin: int
-    is_public: int
-    comments_disabled: int
-    tags: List[str]
-    attachments: List[str]
-    meta: List[Dict[str, Any]]
-    likes: int
-    profile: PulseProfile
-    comments: int
 
 
 @dataclass
@@ -612,150 +581,6 @@ class DerivativePositionCollateralLimits(_Type):
 class BalanceInfo(_Type):
     aum: float
     aum_net: float
-
-
-# endregion
-
-# region Dataclass definitions for types of merchant use
-
-
-@compose(dataclass, partial)
-class InvoiceSubmission(_Type):
-    id: str
-    t: int
-    type: Literal["ECOMMERCE", "POS"]
-    duration: int
-    amount: float
-    currency: str
-    order_id: str
-    pay_currencies: List[str]
-    webhook: str
-    redirect_url: str
-    status: Literal["CREATED", "PENDING", "COMPLETED", "EXPIRED"]
-    customer_info: "CustomerInfo"
-    invoices: List["Invoice"]
-    payment: "Payment"
-    additional_payments: List["Payment"]
-    merchant_name: str
-
-    @classmethod
-    def parse(cls, data: Dict[str, Any]) -> "InvoiceSubmission":
-        if "customer_info" in data and data["customer_info"] is not None:
-            data["customer_info"] = InvoiceSubmission.CustomerInfo(
-                **data["customer_info"]
-            )
-
-        for index, invoice in enumerate(data["invoices"]):
-            data["invoices"][index] = InvoiceSubmission.Invoice(**invoice)
-
-        if "payment" in data and data["payment"] is not None:
-            data["payment"] = InvoiceSubmission.Payment(**data["payment"])
-
-        if "additional_payments" in data and data["additional_payments"] is not None:
-            for index, additional_payment in enumerate(data["additional_payments"]):
-                data["additional_payments"][index] = InvoiceSubmission.Payment(
-                    **additional_payment
-                )
-
-        return InvoiceSubmission(**data)
-
-    @compose(dataclass, partial)
-    class CustomerInfo:
-        nationality: str
-        resid_country: str
-        resid_state: str
-        resid_city: str
-        resid_zip_code: str
-        resid_street: str
-        resid_building_no: str
-        full_name: str
-        email: str
-        tos_accepted: bool
-
-    @compose(dataclass, partial)
-    class Invoice:
-        amount: float
-        currency: str
-        pay_currency: str
-        pool_currency: str
-        address: str
-        ext: Dict[str, Any]
-
-    @compose(dataclass, partial)
-    class Payment:
-        txid: str
-        amount: float
-        currency: str
-        method: str
-        status: Literal["CREATED", "COMPLETED", "PROCESSING"]
-        confirmations: int
-        created_at: str
-        updated_at: str
-        deposit_id: int
-        ledger_id: int
-        force_completed: bool
-        amount_diff: str
-
-
-@dataclass
-class InvoicePage(_Type):
-    page: int
-    page_size: int
-    sort: Literal["asc", "desc"]
-    sort_field: Literal["t", "amount", "status"]
-    total_pages: int
-    total_items: int
-    items: List[InvoiceSubmission]
-
-    @classmethod
-    def parse(cls, data: Dict[str, Any]) -> "InvoicePage":
-        for index, item in enumerate(data["items"]):
-            data["items"][index] = InvoiceSubmission.parse(item)
-
-        return InvoicePage(**data)
-
-
-@dataclass
-class InvoiceStats(_Type):
-    time: str
-    count: float
-
-
-@dataclass
-class CurrencyConversion(_Type):
-    base_ccy: str
-    convert_ccy: str
-    created: int
-
-
-@dataclass
-class MerchantDeposit(_Type):
-    id: int
-    invoice_id: Optional[str]
-    order_id: Optional[str]
-    type: Literal["ledger", "deposit"]
-    amount: float
-    t: int
-    txid: str
-    currency: str
-    method: str
-    pay_method: str
-
-
-@dataclass
-class MerchantUnlinkedDeposit(_Type):
-    id: int
-    method: str
-    currency: str
-    created_at: int
-    updated_at: int
-    amount: float
-    fee: float
-    txid: str
-    address: str
-    payment_id: Optional[int]
-    status: str
-    note: Optional[str]
 
 
 # endregion

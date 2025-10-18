@@ -1,10 +1,6 @@
 from typing import Optional
 
-from bfxapi.rest._interfaces import (
-    RestAuthEndpoints,
-    RestMerchantEndpoints,
-    RestPublicEndpoints,
-)
+from bfxapi.rest._interfaces import RestAuthEndpoints, RestPublicEndpoints
 
 
 class BfxRestInterface:
@@ -12,9 +8,5 @@ class BfxRestInterface:
         self, host: str, api_key: Optional[str] = None, api_secret: Optional[str] = None
     ):
         self.auth = RestAuthEndpoints(host=host, api_key=api_key, api_secret=api_secret)
-
-        self.merchant = RestMerchantEndpoints(
-            host=host, api_key=api_key, api_secret=api_secret
-        )
 
         self.public = RestPublicEndpoints(host=host)
