@@ -107,7 +107,7 @@ class BfxWebSocketBucket(Connection):
             json.dumps({"event": "conf", "flags": sum(flags)})
         )
 
-    @Connection._require_websocket_connection
+    @Connection._require_websocket_connection  # type: ignore[arg-type]
     async def subscribe(
         self, channel: str, sub_id: str | None = None, **kwargs: Any
     ) -> None:

@@ -3,6 +3,7 @@ import json
 import random
 import traceback
 from asyncio import Task
+from collections.abc import Callable
 from datetime import datetime
 from logging import Logger
 from socket import gaierror
@@ -10,6 +11,7 @@ from typing import Any, TypedDict
 
 import websockets.asyncio.client
 import websockets.frames
+from pyee import Handler
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
 
 from bfxapi._utils.json_encoder import JSONEncoder
@@ -89,7 +91,7 @@ class BfxWebSocketClient(Connection):
             logger,
         )
 
-        self.__buckets: dict[BfxWebSocketBucket, Task | None] = {}
+        self.__buckets: dict[BfxWebSocketBucket, Task[None] | None] = {}
 
         self.__reconnection: _Reconnection | None = None
 
@@ -121,9 +123,9 @@ class BfxWebSocketClient(Connection):
     async def start(self) -> None:
         _delay = _Delay(backoff_factor=1.618)
 
-        _sleep: Task | None = None
+        _sleep: Task[None] | None = None
 
-        def _on_timeout():
+        def _on_timeout() -> None:
             if not self.open:
                 if _sleep:
                     _sleep.cancel()
@@ -148,7 +150,7 @@ class BfxWebSocketClient(Connection):
                 gaierror,
             ) as error:
 
-                async def _cancel(task: Task) -> None:
+                async def _cancel(task: Task[None]) -> None:
                     task.cancel()
 
                     try:
@@ -320,7 +322,7 @@ class BfxWebSocketClient(Connection):
 
         return bucket
 
-    @Connection._require_websocket_connection
+    @Connection._require_websocket_connection  # type: ignore[arg-type]
     async def subscribe(
         self, channel: str, sub_id: str | None = None, **kwargs: Any
     ) -> None:
@@ -374,7 +376,7 @@ class BfxWebSocketClient(Connection):
         if self.open:
             await self._websocket.close(code=code, reason=reason)
 
-    @Connection._require_websocket_authentication
+    @Connection._require_websocket_authentication  # type: ignore[arg-type]
     async def notify(
         self, info: Any, message_id: int | None = None, **kwargs: Any
     ) -> None:
@@ -395,5 +397,9 @@ class BfxWebSocketClient(Connection):
             json.dumps([0, event, None, data], cls=JSONEncoder)
         )
 
-    def on(self, event, callback=None):
+    def on(
+        self, event: str, callback: Handler | None = None
+    ) -> Handler | Callable[[Handler], Handler]:
+        if callback is None:
+            return self.__event_emitter.on(event)
         return self.__event_emitter.on(event, callback)

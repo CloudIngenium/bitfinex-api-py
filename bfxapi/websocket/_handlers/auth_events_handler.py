@@ -4,7 +4,8 @@ from pyee.base import EventEmitter
 
 from bfxapi.types import serializers
 from bfxapi.types.dataclasses import FundingOffer, Order
-from bfxapi.types.serializers import _Notification
+from bfxapi.types.labeler import _Serializer
+from bfxapi.types.notification import _Notification
 
 
 class AuthEventsHandler:
@@ -37,7 +38,7 @@ class AuthEventsHandler:
         "bu": "balance_update",
     }
 
-    __SERIALIZERS: dict[tuple[str, ...], serializers._Serializer] = {
+    __SERIALIZERS: dict[tuple[str, ...], _Serializer[Any]] = {
         ("os", "on", "ou", "oc"): serializers.Order,
         ("ps", "pn", "pu", "pc"): serializers.Position,
         ("te", "tu"): serializers.Trade,
@@ -77,7 +78,7 @@ class AuthEventsHandler:
                     if all(
                         isinstance(sub_stream, list) for sub_stream in stream
                     ):
-                        data = [
+                        data: Any = [
                             serializer.parse(*sub_stream)
                             for sub_stream in stream
                         ]
@@ -89,7 +90,7 @@ class AuthEventsHandler:
     def __notification(self, stream: Any) -> None:
         event: str = "notification"
 
-        serializer: _Notification = _Notification[None](serializer=None)
+        serializer: _Notification[Any] = _Notification[None](serializer=None)
 
         if stream[1] in ("on-req", "ou-req", "oc-req"):
             event, serializer = (

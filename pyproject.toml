@@ -77,5 +77,6 @@ addopts = "--cov=bfxapi --cov-report=term-missing --cov-fail-under=75"
 
 [tool.mypy]
 python_version = "3.13"
-warn_return_any = true
-warn_unused_configs = true
+strict = true
+warn_unused_ignores = true
+disallow_any_unimported = true

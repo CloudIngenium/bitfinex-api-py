@@ -36,7 +36,7 @@ from bfxapi.types import (
     Withdrawal,
     serializers,
 )
-from bfxapi.types.serializers import _Notification
+from bfxapi.types.notification import _Notification
 
 
 class RestAuthEndpoints(Interface):

@@ -152,7 +152,7 @@ class Middleware:
 
     def __get_authentication_headers(
         self, endpoint: str, data: str | None = None
-    ):
+    ) -> dict[str, str]:
         assert self.__api_key and self.__api_secret
 
         nonce = str(round(datetime.now().timestamp() * 1_000_000))

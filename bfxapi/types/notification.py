@@ -17,7 +17,7 @@ class Notification(_Type, Generic[T]):
     text: str
 
 
-class _Notification(_Serializer, Generic[T]):
+class _Notification(_Serializer[Notification[T]], Generic[T]):
     __LABELS = [
         "mts",
         "type",
@@ -30,8 +30,10 @@ class _Notification(_Serializer, Generic[T]):
     ]
 
     def __init__(
-        self, serializer: _Serializer | None = None, is_iterable: bool = False
-    ):
+        self,
+        serializer: _Serializer[Any] | None = None,
+        is_iterable: bool = False,
+    ) -> None:
         super().__init__("Notification", Notification, _Notification.__LABELS)
 
         self.serializer, self.is_iterable = serializer, is_iterable

@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from decimal import Decimal
 from typing import Any, Generic, TypeVar, cast
 
@@ -100,8 +100,10 @@ def set_decimal_mode(enabled: bool) -> None:
     _decimal_mode = enabled
 
 
-def compose(*decorators):
-    def wrapper(function):
+def compose(
+    *decorators: Callable[[type[Any]], type[Any]],
+) -> Callable[[type[Any]], type[Any]]:
+    def wrapper(function: type[Any]) -> type[Any]:
         for decorator in reversed(decorators):
             function = decorator(function)
         return function
@@ -109,8 +111,8 @@ def compose(*decorators):
     return wrapper
 
 
-def partial(cls):
-    def __init__(self, **kwargs):
+def partial(cls: type[Any]) -> type[Any]:
+    def __init__(self: Any, **kwargs: Any) -> None:
         for annotation in self.__annotations__.keys():
             if annotation not in kwargs:
                 self.__setattr__(annotation, None)
@@ -144,7 +146,7 @@ class _Serializer(Generic[T]):
         labels: list[str],
         *,
         flat: bool = False,
-    ):
+    ) -> None:
         self.name, self.klass, self.__labels, self.__flat = (
             name,
             klass,
@@ -190,7 +192,7 @@ class _Serializer(Generic[T]):
         return array[:1] + cls.__flatten(array[1:])
 
 
-class _RecursiveSerializer(_Serializer, Generic[T]):
+class _RecursiveSerializer(_Serializer[T], Generic[T]):
     def __init__(
         self,
         name: str,
@@ -199,7 +201,7 @@ class _RecursiveSerializer(_Serializer, Generic[T]):
         *,
         serializers: dict[str, _Serializer[Any]],
         flat: bool = False,
-    ):
+    ) -> None:
         super().__init__(name, klass, labels, flat=flat)
 
         self.serializers = serializers

@@ -4,7 +4,6 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from functools import wraps
 from typing import (
     Any,
     Concatenate,
@@ -62,8 +61,9 @@ class Connection(ABC):
     def _require_websocket_connection(
         function: Callable[Concatenate[_S, _P], Awaitable[_R]],
     ) -> Callable[Concatenate[_S, _P], Awaitable[_R]]:
-        @wraps(function)
-        async def wrapper(self: _S, *args: Any, **kwargs: Any) -> _R:
+        async def wrapper(
+            self: _S, /, *args: _P.args, **kwargs: _P.kwargs
+        ) -> _R:
             if self.open:
                 return await function(self, *args, **kwargs)
 
@@ -75,8 +75,9 @@ class Connection(ABC):
     def _require_websocket_authentication(
         function: Callable[Concatenate[_S, _P], Awaitable[_R]],
     ) -> Callable[Concatenate[_S, _P], Awaitable[_R]]:
-        @wraps(function)
-        async def wrapper(self: _S, *args: Any, **kwargs: Any) -> _R:
+        async def wrapper(
+            self: _S, /, *args: _P.args, **kwargs: _P.kwargs
+        ) -> _R:
             if not self.authentication:
                 raise ActionRequiresAuthentication(
                     "To perform this action you need to "
