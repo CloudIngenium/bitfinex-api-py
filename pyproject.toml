@@ -73,7 +73,7 @@ known-first-party = ["bfxapi"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=bfxapi --cov-report=term-missing --cov-fail-under=75"
+addopts = "--cov=bfxapi --cov-report=term-missing --cov-fail-under=80"
 
 [tool.mypy]
 python_version = "3.13"
