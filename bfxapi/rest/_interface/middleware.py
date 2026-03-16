@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -14,6 +15,27 @@ from bfxapi.rest.exceptions import GenericError, RequestParameterError
 
 if TYPE_CHECKING:
     from requests.sessions import _Params
+
+
+@dataclass
+class RateLimitInfo:
+    """Rate limit information from the last API response."""
+
+    remaining: int | None = None
+    limit: int | None = None
+    reset: int | None = None
+
+    @classmethod
+    def from_headers(cls, headers: dict[str, str]) -> "RateLimitInfo":
+        def _int(key: str) -> int | None:
+            val = headers.get(key)
+            return int(val) if val is not None else None
+
+        return cls(
+            remaining=_int("x-ratelimit-remaining"),
+            limit=_int("x-ratelimit-limit"),
+            reset=_int("x-ratelimit-reset"),
+        )
 
 
 class _Error(IntEnum):
@@ -38,20 +60,26 @@ class Middleware:
 
         self.__api_secret = api_secret
 
+        self.last_rate_limit: RateLimitInfo = RateLimitInfo()
+
     def get(self, endpoint: str, params: "_Params | None" = None) -> Any:
         headers = {"Accept": "application/json"}
 
         if self.__api_key and self.__api_secret:
             headers = {**headers, **self.__get_authentication_headers(endpoint)}
 
-        request = requests.get(
+        response = requests.get(
             url=f"{self.__host}/{endpoint}",
             params=params,
             headers=headers,
             timeout=Middleware.__TIMEOUT,
         )
 
-        data = request.json(cls=JSONDecoder)
+        self.last_rate_limit = RateLimitInfo.from_headers(
+            dict(response.headers)
+        )
+
+        data = response.json(cls=JSONDecoder)
 
         if isinstance(data, list) and len(data) > 0 and data[0] == "error":
             self.__handle_error(data)
@@ -77,7 +105,7 @@ class Middleware:
                 **self.__get_authentication_headers(endpoint, _body),
             }
 
-        request = requests.post(
+        response = requests.post(
             url=f"{self.__host}/{endpoint}",
             data=_body,
             params=params,
@@ -85,7 +113,11 @@ class Middleware:
             timeout=Middleware.__TIMEOUT,
         )
 
-        data = request.json(cls=JSONDecoder)
+        self.last_rate_limit = RateLimitInfo.from_headers(
+            dict(response.headers)
+        )
+
+        data = response.json(cls=JSONDecoder)
 
         if isinstance(data, list) and len(data) > 0 and data[0] == "error":
             self.__handle_error(data)

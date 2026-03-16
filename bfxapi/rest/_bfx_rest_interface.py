@@ -1,3 +1,4 @@
+from bfxapi.rest._interface.middleware import RateLimitInfo
 from bfxapi.rest._interfaces import RestAuthEndpoints, RestPublicEndpoints
 
 
@@ -13,3 +14,8 @@ class BfxRestInterface:
         )
 
         self.public = RestPublicEndpoints(host=host)
+
+    @property
+    def last_rate_limit(self) -> RateLimitInfo:
+        """Rate limit info from the most recent REST call (auth or public)."""
+        return self.auth._m.last_rate_limit

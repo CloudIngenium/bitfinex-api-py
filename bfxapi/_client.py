@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from bfxapi._utils.logging import ColorLogger
 from bfxapi.exceptions import IncompleteCredentialError
 from bfxapi.rest import BfxRestInterface
+from bfxapi.types.labeler import set_decimal_mode
 from bfxapi.websocket import BfxWebSocketClient
 
 if TYPE_CHECKING:
@@ -26,7 +27,9 @@ class Client:
         filters: list[str] | None = None,
         timeout: int | None = 60 * 15,
         log_filename: str | None = None,
+        decimal_mode: bool = False,
     ) -> None:
+        set_decimal_mode(decimal_mode)
         credentials: _Credentials | None = None
 
         if api_key and api_secret:
