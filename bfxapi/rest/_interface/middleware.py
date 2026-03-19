@@ -11,7 +11,13 @@ import requests
 from bfxapi._utils.json_decoder import JSONDecoder
 from bfxapi._utils.json_encoder import JSONEncoder
 from bfxapi.exceptions import InvalidCredentialError
-from bfxapi.rest.exceptions import GenericError, RequestParameterError
+from bfxapi.rest.exceptions import (
+    GenericError,
+    InsufficientFundsError,
+    NetworkError,
+    RateLimitError,
+    RequestParameterError,
+)
 
 if TYPE_CHECKING:
     from requests.sessions import _Params
@@ -41,6 +47,7 @@ class RateLimitInfo:
 class _Error(IntEnum):
     ERR_UNK = 10000
     ERR_GENERIC = 10001
+    ERR_RATE_LIMIT = 10010
     ERR_PARAMS = 10020
     ERR_AUTH_FAIL = 10100
 
@@ -68,16 +75,33 @@ class Middleware:
         if self.__api_key and self.__api_secret:
             headers = {**headers, **self.__get_authentication_headers(endpoint)}
 
-        response = requests.get(
-            url=f"{self.__host}/{endpoint}",
-            params=params,
-            headers=headers,
-            timeout=Middleware.__TIMEOUT,
-        )
+        try:
+            response = requests.get(
+                url=f"{self.__host}/{endpoint}",
+                params=params,
+                headers=headers,
+                timeout=Middleware.__TIMEOUT,
+            )
+        except requests.ConnectionError as e:
+            raise NetworkError(f"Connection error: {e}") from e
+        except requests.Timeout as e:
+            raise NetworkError(f"Request timeout: {e}") from e
 
         self.last_rate_limit = RateLimitInfo.from_headers(
             dict(response.headers)
         )
+
+        if response.status_code == 429:
+            reset = self.last_rate_limit.reset
+            retry_ms = (
+                (reset - int(datetime.now().timestamp())) * 1000
+                if reset
+                else 60_000
+            )
+            raise RateLimitError(
+                "Rate limit exceeded (HTTP 429)",
+                retry_after_ms=max(retry_ms, 1000),
+            )
 
         data = response.json(cls=JSONDecoder)
 
@@ -105,17 +129,34 @@ class Middleware:
                 **self.__get_authentication_headers(endpoint, _body),
             }
 
-        response = requests.post(
-            url=f"{self.__host}/{endpoint}",
-            data=_body,
-            params=params,
-            headers=headers,
-            timeout=Middleware.__TIMEOUT,
-        )
+        try:
+            response = requests.post(
+                url=f"{self.__host}/{endpoint}",
+                data=_body,
+                params=params,
+                headers=headers,
+                timeout=Middleware.__TIMEOUT,
+            )
+        except requests.ConnectionError as e:
+            raise NetworkError(f"Connection error: {e}") from e
+        except requests.Timeout as e:
+            raise NetworkError(f"Request timeout: {e}") from e
 
         self.last_rate_limit = RateLimitInfo.from_headers(
             dict(response.headers)
         )
+
+        if response.status_code == 429:
+            reset = self.last_rate_limit.reset
+            retry_ms = (
+                (reset - int(datetime.now().timestamp())) * 1000
+                if reset
+                else 60_000
+            )
+            raise RateLimitError(
+                "Rate limit exceeded (HTTP 429)",
+                retry_after_ms=max(retry_ms, 1000),
+            )
 
         data = response.json(cls=JSONDecoder)
 
@@ -125,25 +166,42 @@ class Middleware:
         return data
 
     def __handle_error(self, error: list[Any]) -> NoReturn:
-        if error[1] == _Error.ERR_PARAMS:
-            raise RequestParameterError(
-                "The request was rejected with the following parameter "
-                f"error: <{error[2]}>."
+        code = error[1]
+        message = error[2] if len(error) > 2 else str(error)
+
+        if code == _Error.ERR_RATE_LIMIT:
+            reset = self.last_rate_limit.reset
+            retry_ms = (
+                (reset - int(datetime.now().timestamp())) * 1000
+                if reset
+                else 60_000
+            )
+            raise RateLimitError(
+                f"Rate limit exceeded: <{message}>",
+                retry_after_ms=max(retry_ms, 1000),
             )
 
-        if error[1] == _Error.ERR_AUTH_FAIL:
+        if code == _Error.ERR_PARAMS:
+            raise RequestParameterError(
+                "The request was rejected with the following parameter "
+                f"error: <{message}>."
+            )
+
+        if code == _Error.ERR_AUTH_FAIL:
             raise InvalidCredentialError(
                 "Can't authenticate with given API-KEY and API-SECRET."
             )
 
-        if (
-            not error[1]
-            or error[1] == _Error.ERR_UNK
-            or error[1] == _Error.ERR_GENERIC
-        ):
+        # Insufficient funds — check both error code and message
+        if code == _Error.ERR_GENERIC and isinstance(message, str):
+            msg_lower = message.lower()
+            if "insufficient" in msg_lower or "not enough" in msg_lower:
+                raise InsufficientFundsError(f"Insufficient funds: <{message}>")
+
+        if not code or code == _Error.ERR_UNK or code == _Error.ERR_GENERIC:
             raise GenericError(
                 "The request was rejected with the following generic "
-                f"error: <{error[2]}>."
+                f"error: <{message}>."
             )
 
         raise RuntimeError(

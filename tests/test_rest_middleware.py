@@ -3,10 +3,17 @@ import hmac
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests as req_lib
 
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.rest._interface.middleware import Middleware, _Error
-from bfxapi.rest.exceptions import GenericError, RequestParameterError
+from bfxapi.rest.exceptions import (
+    GenericError,
+    InsufficientFundsError,
+    NetworkError,
+    RateLimitError,
+    RequestParameterError,
+)
 
 
 class TestMiddlewareGet:
@@ -226,9 +233,98 @@ class TestMiddlewareAuthentication:
         assert headers["bfx-signature"] == expected_sig
 
 
+class TestNewErrorTypes:
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_rate_limit_error_code(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = [
+            "error",
+            10010,
+            "ERR_RATE_LIMIT",
+        ]
+        mock_get.return_value = mock_response
+
+        m = Middleware("https://api.example.com")
+        with pytest.raises(RateLimitError):
+            m.get("v2/auth/r/wallets")
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_rate_limit_http_429(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        mock_get.return_value = mock_response
+
+        m = Middleware("https://api.example.com")
+        with pytest.raises(RateLimitError):
+            m.get("v2/auth/r/wallets")
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_insufficient_funds_error(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = [
+            "error",
+            10001,
+            "insufficient balance in margin wallet",
+        ]
+        mock_get.return_value = mock_response
+
+        m = Middleware("https://api.example.com")
+        with pytest.raises(InsufficientFundsError):
+            m.get("v2/auth/w/order/submit")
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_network_error_connection(self, mock_get):
+        mock_get.side_effect = req_lib.ConnectionError("refused")
+
+        m = Middleware("https://api.example.com")
+        with pytest.raises(NetworkError):
+            m.get("v2/platform/status")
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_network_error_timeout(self, mock_get):
+        mock_get.side_effect = req_lib.Timeout("timed out")
+
+        m = Middleware("https://api.example.com")
+        with pytest.raises(NetworkError):
+            m.get("v2/platform/status")
+
+    @patch("bfxapi.rest._interface.middleware.requests.post")
+    def test_post_rate_limit_http_429(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        mock_post.return_value = mock_response
+
+        m = Middleware(
+            "https://api.example.com",
+            api_key="key",
+            api_secret="secret",
+        )
+        with pytest.raises(RateLimitError):
+            m.post("v2/auth/w/order/submit")
+
+    @patch("bfxapi.rest._interface.middleware.requests.post")
+    def test_post_network_error(self, mock_post):
+        mock_post.side_effect = req_lib.ConnectionError("reset")
+
+        m = Middleware(
+            "https://api.example.com",
+            api_key="key",
+            api_secret="secret",
+        )
+        with pytest.raises(NetworkError):
+            m.post("v2/auth/w/order/submit")
+
+
 class TestErrorEnum:
     def test_error_values(self):
         assert _Error.ERR_UNK == 10000
         assert _Error.ERR_GENERIC == 10001
+        assert _Error.ERR_RATE_LIMIT == 10010
         assert _Error.ERR_PARAMS == 10020
         assert _Error.ERR_AUTH_FAIL == 10100
