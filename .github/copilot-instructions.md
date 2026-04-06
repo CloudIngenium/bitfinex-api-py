@@ -1,5 +1,8 @@
 # Project Guidelines
 
+> **Primary reference:** Read the repo's `CLAUDE.md` first — it is the single source of truth. This file provides supplementary Copilot-specific context.
+
+
 ## Build and Test
 
 - Use Python 3.12+. Install with `pip install -e ".[dev]"`. Test with `pytest` (coverage threshold 80%).
