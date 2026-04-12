@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from datetime import datetime
+import time
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -195,7 +195,7 @@ class Middleware:
     ) -> dict[str, str]:
         assert self.__api_key and self.__api_secret
 
-        nonce = str(round(datetime.now().timestamp() * 1_000_000))
+        nonce = str(time.time_ns() // 1_000)
 
         if not data:
             message = f"/api/v2/{endpoint}{nonce}"

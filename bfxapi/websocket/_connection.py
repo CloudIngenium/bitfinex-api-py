@@ -3,7 +3,7 @@ import hmac
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+import time
 from typing import (
     Any,
     Concatenate,
@@ -100,7 +100,7 @@ class Connection(ABC):
             "apiKey": api_key,
         }
 
-        message["authNonce"] = round(datetime.now().timestamp() * 1_000_000)
+        message["authNonce"] = time.time_ns() // 1_000
 
         message["authPayload"] = f"AUTH{message['authNonce']}"
 
