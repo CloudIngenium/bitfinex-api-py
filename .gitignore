@@ -34,3 +34,7 @@ htmlcov/
 
 # Per-session git worktrees (autonomy-contract.md doctrine, scratch space only).
 .worktrees/
+.claude/rules/
+.cursor/rules/
+.claude/.mcp.json
+*.lscache
