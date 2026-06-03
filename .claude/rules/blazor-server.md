@@ -1,1 +1,0 @@
-../../../.claude/rules/blazor-server.md

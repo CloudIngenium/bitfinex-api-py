@@ -1,1 +1,0 @@
-../../../.claude/rules/plan-file-lifecycle.md

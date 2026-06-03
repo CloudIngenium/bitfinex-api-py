@@ -1,1 +1,0 @@
-../../../.claude/rules/frontend-design.md

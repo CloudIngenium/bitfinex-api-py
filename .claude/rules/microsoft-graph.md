@@ -1,1 +1,0 @@
-../../../.claude/rules/microsoft-graph.md
