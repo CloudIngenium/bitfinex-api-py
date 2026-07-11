@@ -8,21 +8,6 @@ from datetime import datetime
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, NoReturn
 
-_NONCE_LOCK = threading.Lock()
-_NONCE_LAST = 0
-
-
-def _next_nonce() -> str:
-    """Monotonic microsecond nonce. Guards against duplicates when two calls
-    hit the same microsecond tick under concurrent use (H8 fix)."""
-    global _NONCE_LAST
-    with _NONCE_LOCK:
-        candidate = time.time_ns() // 1_000
-        if candidate <= _NONCE_LAST:
-            candidate = _NONCE_LAST + 1
-        _NONCE_LAST = candidate
-    return str(candidate)
-
 import requests
 
 from bfxapi._utils.json_decoder import JSONDecoder
@@ -38,6 +23,21 @@ from bfxapi.rest.exceptions import (
 
 if TYPE_CHECKING:
     from requests.sessions import _Params
+
+_NONCE_LOCK = threading.Lock()
+_NONCE_LAST = 0
+
+
+def _next_nonce() -> str:
+    """Monotonic microsecond nonce. Guards against duplicates when two calls
+    hit the same microsecond tick under concurrent use (H8 fix)."""
+    global _NONCE_LAST
+    with _NONCE_LOCK:
+        candidate = time.time_ns() // 1_000
+        if candidate <= _NONCE_LAST:
+            candidate = _NONCE_LAST + 1
+        _NONCE_LAST = candidate
+    return str(candidate)
 
 
 @dataclass
