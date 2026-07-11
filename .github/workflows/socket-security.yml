@@ -11,5 +11,5 @@ concurrency:
   cancel-in-progress: true
 jobs:
   socket:
-    uses: CloudIngenium/.github/.github/workflows/socket-security.yml@main
+    uses: CloudIngenium/.github/.github/workflows/socket-security.yml@24fac1de6a37800bae89a7b4f858742c7a455043
     secrets: inherit
