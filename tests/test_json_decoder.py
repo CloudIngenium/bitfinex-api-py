@@ -55,3 +55,12 @@ class TestJSONDecoder:
             '{"orderId": 123, "items": [1, 2, 3]}', cls=JSONDecoder
         )
         assert result == {"order_id": 123, "items": [1, 2, 3]}
+
+    def test_tolerates_simplejson_encoding_kwarg(self):
+        # Regression: `requests` routes response.json(cls=JSONDecoder) through
+        # simplejson when python3-simplejson is installed, and simplejson.loads
+        # injects an obsolete `encoding=` kwarg that stdlib json.JSONDecoder
+        # rejects on Python 3.9+ (TypeError). The decoder must swallow it.
+        # Without kwargs.pop("encoding", ...) constructing this raises TypeError.
+        decoder = JSONDecoder(encoding="utf-8")
+        assert decoder.decode('{"firstName": "John"}') == {"first_name": "John"}

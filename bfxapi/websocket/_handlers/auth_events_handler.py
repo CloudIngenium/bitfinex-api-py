@@ -52,9 +52,7 @@ class AuthEventsHandler:
     }
 
     __SERIALIZERS: dict[str, _Serializer[Any]] = {
-        abbr: ser
-        for abbrs, ser in _GROUPED.items()
-        for abbr in abbrs
+        abbr: ser for abbrs, ser in _GROUPED.items() for abbr in abbrs
     }
 
     def __init__(self, event_emitter: EventEmitter) -> None:
@@ -79,12 +77,9 @@ class AuthEventsHandler:
             if serializer is not None:
                 event = AuthEventsHandler.__ABBREVIATIONS[abbrevation]
 
-                if all(
-                    isinstance(sub_stream, list) for sub_stream in stream
-                ):
+                if all(isinstance(sub_stream, list) for sub_stream in stream):
                     data: Any = [
-                        serializer.parse(*sub_stream)
-                        for sub_stream in stream
+                        serializer.parse(*sub_stream) for sub_stream in stream
                     ]
                 else:
                     data = serializer.parse(*stream)

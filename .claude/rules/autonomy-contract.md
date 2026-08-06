@@ -1,1 +1,0 @@
-../../../.claude/rules/autonomy-contract.md
