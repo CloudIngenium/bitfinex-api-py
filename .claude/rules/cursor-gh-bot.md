@@ -1,0 +1,1 @@
+../../../.claude/rules/cursor-gh-bot.md
