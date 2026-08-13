@@ -1,0 +1,13 @@
+name: Dependabot Auto-Merge
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot-auto-merge:
+    uses: CloudIngenium/.github/.github/workflows/dependabot-auto-merge.yml@1f61fcc8b534fdeecadd8d9b02ad91cf68543f2b # main @ 2026-08-13
+    secrets: inherit
