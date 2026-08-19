@@ -2,19 +2,15 @@ name: Commit Lint
 on:
   pull_request:
     branches: [main, master]
+
+# PP114 (2026-05-15): cancel in-flight runs when a new push lands on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 permissions:
   contents: read
   pull-requests: read
 jobs:
   commitlint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Lint commits in PR
-        uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6.2.1
-        with:
-          configFile: ".commitlintrc.json"
-          failOnWarnings: false
-          firstParent: false
+    # Routing por GHA_BUDGET_STAGE vive en el reusable (una sola copia fleet-wide).
+    uses: CloudIngenium/.github/.github/workflows/commitlint.yml@8e7f84a3b6d35b93d05726033d5ee036d590bd83 # commitlint-reusable
