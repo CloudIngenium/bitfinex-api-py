@@ -1,1 +1,0 @@
-../../../.claude/rules/error-store-integration.md
