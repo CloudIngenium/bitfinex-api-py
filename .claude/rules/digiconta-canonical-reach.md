@@ -1,1 +1,0 @@
-../../../.claude/rules/digiconta-canonical-reach.md
