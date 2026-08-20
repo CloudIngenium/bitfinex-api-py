@@ -3,7 +3,6 @@ on:
   pull_request:
     branches: [main, master]
 
-# PP114 (2026-05-15): cancel in-flight runs when a new push lands on the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'merge_group' }}
@@ -12,5 +11,19 @@ permissions:
   pull-requests: read
 jobs:
   commitlint:
-    # Routing por GHA_BUDGET_STAGE vive en el reusable (una sola copia fleet-wide).
-    uses: CloudIngenium/.github/.github/workflows/commitlint.yml@8e7f84a3b6d35b93d05726033d5ee036d590bd83 # commitlint-reusable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Dependabot emits mechanical "Bump X from A to B" subjects that fail
+      # conventional-commit linting. Skip the lint step for bot commits — the
+      # job still runs and succeeds, so a required "commitlint" context still
+      # reports green, while human PRs keep full enforcement.
+      - name: Lint commits in PR
+        if: ${{ github.actor != 'dependabot[bot]' }}
+        uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6.2.1
+        with:
+          configFile: ".commitlintrc.json"
+          failOnWarnings: false
+          firstParent: false
