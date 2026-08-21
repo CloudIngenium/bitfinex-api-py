@@ -1,0 +1,47 @@
+name: Dependabot Auto-Merge
+
+# Self-contained ON PURPOSE. The org reusable workflow lives in CloudIngenium/.github,
+# which is PRIVATE — GitHub resolves a private repo's reusable workflows only for
+# PRIVATE callers, so a caller here would fail at resolution time with 0 jobs on every
+# dependabot PR. This repo is public, so it carries the logic itself.
+#
+# SAFETY — this uses pull_request_target, which runs with a write-capable token, so it
+# deliberately NEVER checks out the PR. No untrusted code from the pull request is
+# executed; the job only calls the gh CLI against the PR's API. That is what makes the
+# pattern safe on a public repo.
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot-auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve patch and minor updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        continue-on-error: true
+        env:
+          GH_PROMPT_DISABLED: "1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr review --approve "$PR_URL"
+
+      - name: Arm patch and minor updates for squash merge
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_PROMPT_DISABLED: "1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
