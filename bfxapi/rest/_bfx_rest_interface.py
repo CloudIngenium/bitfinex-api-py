@@ -8,12 +8,19 @@ class BfxRestInterface:
         host: str,
         api_key: str | None = None,
         api_secret: str | None = None,
+        *,
+        lossless_financial_decode: bool = False,
     ):
         self.auth = RestAuthEndpoints(
-            host=host, api_key=api_key, api_secret=api_secret
+            host=host,
+            api_key=api_key,
+            api_secret=api_secret,
+            lossless_financial_decode=lossless_financial_decode,
         )
 
-        self.public = RestPublicEndpoints(host=host)
+        self.public = RestPublicEndpoints(
+            host=host, lossless_financial_decode=lossless_financial_decode
+        )
 
     @property
     def last_rate_limit(self) -> RateLimitInfo:

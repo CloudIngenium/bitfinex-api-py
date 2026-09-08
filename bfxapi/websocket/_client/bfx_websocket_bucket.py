@@ -6,6 +6,7 @@ from typing import Any, cast
 import websockets.asyncio.client
 from pyee import EventEmitter
 
+from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_decoder import JSONDecoder
 from bfxapi.websocket._connection import Connection
 from bfxapi.websocket._handlers import PublicChannelsHandler
@@ -21,8 +22,17 @@ def _strip(message: dict[str, Any], keys: list[str]) -> dict[str, Any]:
 class BfxWebSocketBucket(Connection):
     __MAXIMUM_SUBSCRIPTIONS_AMOUNT = 25
 
-    def __init__(self, host: str, event_emitter: EventEmitter) -> None:
+    def __init__(
+        self,
+        host: str,
+        event_emitter: EventEmitter,
+        *,
+        lossless_financial_decode: bool = False,
+    ) -> None:
         super().__init__(host)
+        self.__decode_options = financial_decode_options(
+            lossless_financial_decode
+        )
 
         self.__event_emitter = event_emitter
         self.__pendings: list[dict[str, Any]] = []
@@ -59,7 +69,9 @@ class BfxWebSocketBucket(Connection):
                 self.__condition.notify(1)
 
             async for _message in self._websocket:
-                message = json.loads(_message, cls=JSONDecoder)
+                message = json.loads(
+                    _message, cls=JSONDecoder, **self.__decode_options
+                )
 
                 if isinstance(message, dict):
                     if message["event"] == "subscribed":
