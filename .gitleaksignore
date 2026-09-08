@@ -1,0 +1,4 @@
+# Two historical SHA-256 source fingerprints, verified against the named files.
+# Keep full-range scanning; do not exempt the evidence path or generic API keys.
+c48824332e485f71c45b3021979c058c7c4c8d17:docs/evidence/financial-v2-validation.json:generic-api-key:35
+c48824332e485f71c45b3021979c058c7c4c8d17:docs/evidence/financial-v2-validation.json:generic-api-key:53
