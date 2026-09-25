@@ -69,6 +69,66 @@ class TestPublicChannelsHandler:
         assert args[0][0] == "f_ticker_update"
         assert isinstance(args[0][2], dataclasses.FundingCurrencyTicker)
 
+    def test_trading_ticker_with_first_trade(self):
+        """The live ws ticker channel appends FIRST_TRADE (11 elements)."""
+        subscription = {
+            "channel": "ticker",
+            "sub_id": "abc",
+            "symbol": "tBTCUSD",
+        }
+        stream = [
+            [
+                83837,
+                1.90,
+                83849,
+                2.15,
+                -568,
+                -0.0067,
+                83841,
+                1200.84,
+                85172,
+                83157,
+                1358182043000,
+            ]
+        ]
+        self.handler.handle(subscription, stream)
+
+        ticker = self.ee.emit.call_args[0][2]
+        assert isinstance(ticker, dataclasses.TradingPairTicker)
+        assert ticker.low == 83157
+        assert ticker.first_trade == 1358182043000
+
+    def test_funding_ticker_with_first_trade(self):
+        """The live ws funding ticker channel is 17 elements."""
+        subscription = {"channel": "ticker", "sub_id": "abc", "symbol": "fUSD"}
+        stream = [
+            [
+                0.0003,
+                0.00027,
+                120,
+                17037596.04,
+                0.00014,
+                2,
+                3442183.24,
+                -0.00015,
+                -0.5137,
+                0.00014,
+                358212127.47,
+                0.00035,
+                0.000028,
+                None,
+                None,
+                120625392.51,
+                1469734163000,
+            ]
+        ]
+        self.handler.handle(subscription, stream)
+
+        ticker = self.ee.emit.call_args[0][2]
+        assert isinstance(ticker, dataclasses.FundingCurrencyTicker)
+        assert ticker.frr_amount_available == 120625392.51
+        assert ticker.first_trade == 1469734163000
+
     def test_trading_trade_execution(self):
         subscription = {
             "channel": "trades",

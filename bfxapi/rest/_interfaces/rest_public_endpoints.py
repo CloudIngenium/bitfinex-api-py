@@ -14,6 +14,7 @@ from bfxapi.types import (
     FxRate,
     Leaderboard,
     Liquidation,
+    PairInfo,
     PlatformStatus,
     Statistic,
     TickersHistory,
@@ -26,12 +27,67 @@ from bfxapi.types import (
 )
 
 
+def _candle_key(
+    tf: str,
+    symbol: str,
+    period: int | None,
+    aggregation: int | None,
+    period_start: int | None,
+    period_end: int | None,
+) -> str:
+    """Build the ``trade:<tf>:<symbol>[:selector]`` candle key.
+
+    Bitfinex accepts two funding selector forms: a single period (``:p30``) or
+    an aggregate over a range (``:a30:p2:p30``). The aggregate form needs all
+    three values — an aggregation without a range yields a key the API answers
+    with an empty array, so raise instead of issuing it.
+    """
+    key = f"trade:{tf}:{symbol}"
+
+    if aggregation is not None:
+        if period_start is None or period_end is None:
+            raise ValueError(
+                "aggregation requires both period_start and period_end"
+            )
+        return f"{key}:a{aggregation}:p{period_start}:p{period_end}"
+
+    if period is not None:
+        return f"{key}:p{period}"
+
+    return key
+
+
 class RestPublicEndpoints(Interface):
     def conf(self, config: str) -> Any:
         return self._m.get(f"conf/{config}")[0]
 
     def get_platform_status(self) -> PlatformStatus:
         return serializers.PlatformStatus.parse(*self._m.get("platform/status"))
+
+    def get_pairs_info(
+        self, *, include_futures: bool = True
+    ) -> dict[str, PairInfo]:
+        """Trading-pair metadata from ``pub:info:pair``.
+
+        Carries each pair's minimum and maximum order size, its margin
+        requirements and — since the 2026-09-23 API update — the timestamp
+        of its first trade.
+
+        :param include_futures: also request ``pub:info:pair:futures``.
+        :return: pair symbol (e.g. ``"BTCUSD"``) mapped to its PairInfo.
+        """
+        config = "pub:info:pair"
+
+        if include_futures:
+            config += ",pub:info:pair:futures"
+
+        blocks = cast(list[list[Any]], self._m.get(f"conf/{config}"))
+
+        return {
+            cast(str, sub_data[0]): serializers.PairInfo.parse(*sub_data)
+            for block in blocks
+            for sub_data in block
+        }
 
     def get_tickers(
         self, symbols: list[str]
@@ -219,13 +275,29 @@ class RestPublicEndpoints(Interface):
         symbol: str,
         tf: str = "1m",
         *,
+        period: int | None = None,
+        aggregation: int | None = None,
+        period_start: int | None = None,
+        period_end: int | None = None,
         sort: int | None = None,
         start: str | None = None,
         end: str | None = None,
         limit: int | None = None,
     ) -> list[Candle]:
+        """Historical candles.
+
+        Funding symbols need a period selector appended to the candle key.
+        Pass ``period`` for a single period, or ``aggregation`` together with
+        ``period_start``/``period_end`` for an aggregated range — do not splice
+        the suffix into ``symbol`` yourself. Bitfinex answers a malformed
+        selector with an empty array rather than an error, so a typo here is
+        indistinguishable from "no data".
+        """
+        key = _candle_key(
+            tf, symbol, period, aggregation, period_start, period_end
+        )
         params = {"sort": sort, "start": start, "end": end, "limit": limit}
-        data = self._m.get(f"candles/trade:{tf}:{symbol}/hist", params=params)
+        data = self._m.get(f"candles/{key}/hist", params=params)
         return [serializers.Candle.parse(*sub_data) for sub_data in data]
 
     def get_candles_last(
@@ -233,13 +305,22 @@ class RestPublicEndpoints(Interface):
         symbol: str,
         tf: str = "1m",
         *,
+        period: int | None = None,
+        aggregation: int | None = None,
+        period_start: int | None = None,
+        period_end: int | None = None,
         sort: int | None = None,
         start: str | None = None,
         end: str | None = None,
         limit: int | None = None,
     ) -> Candle:
+        """Most recent candle. See :meth:`get_candles_hist` for the period
+        selector arguments."""
+        key = _candle_key(
+            tf, symbol, period, aggregation, period_start, period_end
+        )
         params = {"sort": sort, "start": start, "end": end, "limit": limit}
-        data = self._m.get(f"candles/trade:{tf}:{symbol}/last", params=params)
+        data = self._m.get(f"candles/{key}/last", params=params)
         return serializers.Candle.parse(*data)
 
     def get_derivatives_status(

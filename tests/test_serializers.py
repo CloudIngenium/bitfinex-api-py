@@ -63,6 +63,63 @@ class TestSerializerCore:
         with pytest.raises(AssertionError, match="<labels> and <\\*args>"):
             s.parse(1.0, 2)  # Missing one arg
 
+    def test_extra_trailing_args_are_ignored(self):
+        """A field Bitfinex appends but this SDK does not map is dropped."""
+        s = generate_labeler_serializer(
+            name="Test",
+            klass=dataclasses.TradingPairBook,
+            labels=["price", "count", "amount"],
+        )
+        result = s.parse(1.0, 2, 3.0, "unmapped-tail")
+        assert (result.price, result.count, result.amount) == (1.0, 2, 3.0)
+
+    def test_optional_tail_allows_short_payload(self):
+        """A peer still sending the pre-append array yields None for the tail."""
+        s = generate_labeler_serializer(
+            name="Test",
+            klass=dataclasses.TradingPairTicker,
+            labels=[
+                "bid",
+                "bid_size",
+                "ask",
+                "ask_size",
+                "daily_change",
+                "daily_change_relative",
+                "last_price",
+                "volume",
+                "high",
+                "low",
+                "first_trade",
+            ],
+            optional_tail=1,
+        )
+        result = s.parse(*range(10))
+        assert result.low == 9
+        assert result.first_trade is None
+
+    def test_optional_tail_still_raises_below_required(self):
+        """optional_tail forgives only the tail — a real gap still raises."""
+        s = generate_labeler_serializer(
+            name="Test",
+            klass=dataclasses.TradingPairBook,
+            labels=["price", "count", "amount"],
+            optional_tail=1,
+        )
+        with pytest.raises(AssertionError, match="<labels> and <\\*args>"):
+            s.parse(1.0)
+
+    def test_optional_tail_yields_none_for_absent_labels(self):
+        s = generate_labeler_serializer(
+            name="Test",
+            klass=dataclasses.TradingPairBook,
+            labels=["price", "_PLACEHOLDER", "count", "amount"],
+            optional_tail=2,
+        )
+        result = s.parse(1.0, None)
+        assert result.price == 1.0
+        assert result.count is None
+        assert result.amount is None
+
     def test_flat_serializer(self):
         result = serializers.SymbolMarginInfo.parse(
             "sym", "tBTCUSD", 1000.0, 2000.0, 500.0, 600.0
@@ -110,6 +167,32 @@ class TestPublicSerializers:
         assert result.volume == 10000.0
         assert result.high == 51000.0
         assert result.low == 49000.0
+        assert result.first_trade is None
+
+    def test_trading_pair_ticker_with_first_trade(self):
+        result = serializers.TradingPairTicker.parse(
+            50000.0,
+            1.5,
+            50001.0,
+            2.0,
+            100.0,
+            0.002,
+            50000.5,
+            10000.0,
+            51000.0,
+            49000.0,
+            1358182043000,
+        )
+        assert result.low == 49000.0
+        assert result.first_trade == 1358182043000
+
+    def test_trading_pair_ticker_null_first_trade(self):
+        """A newly listed pair reports FIRST_TRADE as null, not a timestamp."""
+        result = serializers.TradingPairTicker.parse(
+            *([0.0] * 10),
+            None,
+        )
+        assert result.first_trade is None
 
     def test_funding_currency_ticker(self):
         result = serializers.FundingCurrencyTicker.parse(
@@ -134,6 +217,89 @@ class TestPublicSerializers:
         assert result.frr == 0.0001
         assert result.bid_period == 2
         assert result.frr_amount_available == 10000.0
+        assert result.first_trade is None
+
+    def test_funding_currency_ticker_with_first_trade(self):
+        result = serializers.FundingCurrencyTicker.parse(
+            0.0001,
+            0.00009,
+            2,
+            100.0,
+            0.00011,
+            30,
+            200.0,
+            0.00001,
+            0.01,
+            0.0001,
+            5000.0,
+            0.00012,
+            0.00008,
+            None,
+            None,
+            10000.0,
+            1469734163000,
+        )
+        assert result.frr_amount_available == 10000.0
+        assert result.first_trade == 1469734163000
+
+    def test_pair_info_spot(self):
+        """Spot rows carry 12 details; only the mapped slots are read."""
+        result = serializers.PairInfo.parse(
+            "BTCUSD",
+            [
+                1358182043000,
+                None,
+                None,
+                "0.00004",
+                "2000.0",
+                None,
+                None,
+                None,
+                0.1,
+                0.05,
+                None,
+                None,
+            ],
+        )
+        assert isinstance(result, dataclasses.PairInfo)
+        assert result.pair == "BTCUSD"
+        assert result.first_trade == 1358182043000
+        assert result.min_order_size == "0.00004"
+        assert result.max_order_size == "2000.0"
+        assert result.initial_margin == 0.1
+        assert result.min_margin == 0.05
+
+    def test_pair_info_futures(self):
+        """Futures rows carry exactly 10 details and no trailing padding."""
+        result = serializers.PairInfo.parse(
+            "BTCF0:USTF0",
+            [
+                1562164542332,
+                None,
+                None,
+                "0.00004",
+                "100.0",
+                None,
+                None,
+                None,
+                0.01,
+                0.005,
+            ],
+        )
+        assert result.pair == "BTCF0:USTF0"
+        assert result.first_trade == 1562164542332
+        assert result.initial_margin == 0.01
+        assert result.min_margin == 0.005
+
+    def test_pair_info_unlisted_pair_has_no_first_trade(self):
+        result = serializers.PairInfo.parse(
+            "AAVE:USD",
+            [None, None, None, "0.02", "5000.0", None, None, None, None, None],
+        )
+        assert result.first_trade is None
+        assert result.min_order_size == "0.02"
+        assert result.initial_margin is None
+        assert result.min_margin is None
 
     def test_trading_pair_trade(self):
         result = serializers.TradingPairTrade.parse(

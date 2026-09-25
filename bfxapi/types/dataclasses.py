@@ -12,6 +12,27 @@ class PlatformStatus(_Type):
 
 
 @dataclass
+class PairInfo(_Type):
+    """One entry of the ``pub:info:pair`` / ``pub:info:pair:futures``
+    platform configuration.
+
+    ``min_order_size`` and ``max_order_size`` are returned by the API as
+    decimal *strings*; they are kept verbatim rather than coerced, so no
+    precision is lost before the caller decides how to parse them.
+    """
+
+    pair: str
+    #: Millisecond timestamp of the pair's first trade, or None when the
+    #: pair is newly listed and has no executed trades yet.
+    first_trade: int | None
+    min_order_size: str
+    max_order_size: str
+    #: Only populated for margin and derivative pairs.
+    initial_margin: float | None
+    min_margin: float | None
+
+
+@dataclass
 class TradingPairTicker(_Type):
     bid: float
     bid_size: float
@@ -23,6 +44,9 @@ class TradingPairTicker(_Type):
     volume: float
     high: float
     low: float
+    # Millisecond timestamp of the pair's first trade. None when the pair is
+    # newly listed with no executed trades, or when the API omits the field.
+    first_trade: int | None = None
 
 
 @dataclass
@@ -41,6 +65,9 @@ class FundingCurrencyTicker(_Type):
     high: float
     low: float
     frr_amount_available: float
+    # Millisecond timestamp of the currency's first trade. None when newly
+    # listed with no executed trades, or when the API omits the field.
+    first_trade: int | None = None
 
 
 @dataclass
