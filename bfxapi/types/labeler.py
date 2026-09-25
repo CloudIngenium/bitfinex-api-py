@@ -146,6 +146,7 @@ class _Serializer(Generic[T]):
         labels: list[str],
         *,
         flat: bool = False,
+        optional_tail: int = 0,
     ) -> None:
         self.name, self.klass, self.__labels, self.__flat = (
             name,
@@ -154,11 +155,18 @@ class _Serializer(Generic[T]):
             flat,
         )
 
+        self.__optional_tail = optional_tail
+
     def _serialize(self, *args: Any) -> Iterable[tuple[str, Any]]:
         if self.__flat:
             args = tuple(_Serializer.__flatten(list(args)))
 
-        if len(self.__labels) > len(args):
+        # Trailing optional labels model fields Bitfinex appended to an
+        # existing payload (e.g. FIRST_TRADE): a peer still sending the
+        # older, shorter array is valid and yields None for the tail.
+        required = len(self.__labels) - self.__optional_tail
+
+        if required > len(args):
             raise AssertionError(
                 f"{self.name} -> <labels> and <*args> "
                 "arguments should contain the same amount of elements."
@@ -166,7 +174,7 @@ class _Serializer(Generic[T]):
 
         for index, label in enumerate(self.__labels):
             if label != "_PLACEHOLDER":
-                value = args[index]
+                value = args[index] if index < len(args) else None
                 if (
                     _decimal_mode
                     and label in MONETARY_FIELDS
@@ -201,8 +209,11 @@ class _RecursiveSerializer(_Serializer[T], Generic[T]):
         *,
         serializers: dict[str, _Serializer[Any]],
         flat: bool = False,
+        optional_tail: int = 0,
     ) -> None:
-        super().__init__(name, klass, labels, flat=flat)
+        super().__init__(
+            name, klass, labels, flat=flat, optional_tail=optional_tail
+        )
 
         self.serializers = serializers
 
@@ -210,7 +221,10 @@ class _RecursiveSerializer(_Serializer[T], Generic[T]):
         serialization = dict(self._serialize(*values))
 
         for key in serialization:
-            if key in self.serializers.keys():
+            if (
+                key in self.serializers.keys()
+                and serialization[key] is not None
+            ):
                 serialization[key] = self.serializers[key].parse(
                     *serialization[key]
                 )
@@ -219,9 +233,16 @@ class _RecursiveSerializer(_Serializer[T], Generic[T]):
 
 
 def generate_labeler_serializer(
-    name: str, klass: type[T], labels: list[str], *, flat: bool = False
+    name: str,
+    klass: type[T],
+    labels: list[str],
+    *,
+    flat: bool = False,
+    optional_tail: int = 0,
 ) -> _Serializer[T]:
-    return _Serializer[T](name, klass, labels, flat=flat)
+    return _Serializer[T](
+        name, klass, labels, flat=flat, optional_tail=optional_tail
+    )
 
 
 def generate_recursive_serializer(
@@ -231,7 +252,13 @@ def generate_recursive_serializer(
     *,
     serializers: dict[str, _Serializer[Any]],
     flat: bool = False,
+    optional_tail: int = 0,
 ) -> _RecursiveSerializer[T]:
     return _RecursiveSerializer[T](
-        name, klass, labels, serializers=serializers, flat=flat
+        name,
+        klass,
+        labels,
+        serializers=serializers,
+        flat=flat,
+        optional_tail=optional_tail,
     )
