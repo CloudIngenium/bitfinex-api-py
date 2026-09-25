@@ -1,6 +1,11 @@
 from unittest.mock import MagicMock
 
-from bfxapi.rest._interfaces.rest_public_endpoints import RestPublicEndpoints
+import pytest
+
+from bfxapi.rest._interfaces.rest_public_endpoints import (
+    RestPublicEndpoints,
+    _candle_key,
+)
 from bfxapi.types import (
     Candle,
     DerivativesStatus,
@@ -503,6 +508,75 @@ class TestCandles:
         ep.get_candles_hist("tBTCUSD", tf="1h", limit=100, sort=-1)
         call_args = mock_m.get.call_args
         assert "candles/trade:1h:tBTCUSD/hist" in call_args.args
+
+    def test_get_candles_hist_single_period(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = []
+        ep.get_candles_hist("fUSD", tf="1D", period=30)
+        assert "candles/trade:1D:fUSD:p30/hist" in mock_m.get.call_args.args
+
+    def test_get_candles_hist_aggregated_range(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = []
+        ep.get_candles_hist(
+            "fUSD", tf="1D", aggregation=30, period_start=2, period_end=30
+        )
+        assert (
+            "candles/trade:1D:fUSD:a30:p2:p30/hist" in mock_m.get.call_args.args
+        )
+
+    def test_get_candles_hist_aggregation_prefers_range_over_period(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = []
+        ep.get_candles_hist(
+            "fUSD",
+            tf="1D",
+            period=2,
+            aggregation=30,
+            period_start=2,
+            period_end=30,
+        )
+        assert (
+            "candles/trade:1D:fUSD:a30:p2:p30/hist" in mock_m.get.call_args.args
+        )
+
+    def test_get_candles_hist_aggregation_without_range_raises(self):
+        # Bitfinex answers a malformed selector with an empty array, so an
+        # incomplete aggregate would look exactly like "no data". Fail loudly.
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = []
+        for kwargs in (
+            {"aggregation": 30},
+            {"aggregation": 30, "period_start": 2},
+            {"aggregation": 30, "period_end": 30},
+        ):
+            with pytest.raises(ValueError, match="period_start and period_end"):
+                ep.get_candles_hist("fUSD", tf="1D", **kwargs)
+        mock_m.get.assert_not_called()
+
+    def test_get_candles_last_accepts_the_selectors(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [
+            1609459200000,
+            10000,
+            10100,
+            10200,
+            9900,
+            500,
+        ]
+        ep.get_candles_last(
+            "fUSD", tf="1D", aggregation=30, period_start=2, period_end=30
+        )
+        assert (
+            "candles/trade:1D:fUSD:a30:p2:p30/last" in mock_m.get.call_args.args
+        )
+
+    def test_candle_key_is_unchanged_without_selectors(self):
+        # Regression: adding the selectors must not alter the trading-pair key.
+        assert (
+            _candle_key("1m", "tBTCUSD", None, None, None, None)
+            == "trade:1m:tBTCUSD"
+        )
 
     def test_get_seed_candles(self):
         ep, mock_m = _make_endpoint()
