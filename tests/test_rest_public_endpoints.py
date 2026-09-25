@@ -13,6 +13,7 @@ from bfxapi.types import (
     FxRate,
     Leaderboard,
     Liquidation,
+    PairInfo,
     PlatformStatus,
     Statistic,
     TickersHistory,
@@ -47,6 +48,95 @@ class TestConf:
         result = ep.conf("pub:list:currency")
         mock_m.get.assert_called_once_with("conf/pub:list:currency")
         assert result == ["BTC", "ETH"]
+
+
+_SPOT_PAIR_ROW = [
+    "BTCUSD",
+    [
+        1358182043000,
+        None,
+        None,
+        "0.00004",
+        "2000.0",
+        None,
+        None,
+        None,
+        0.1,
+        0.05,
+        None,
+        None,
+    ],
+]
+
+_FUTURES_PAIR_ROW = [
+    "BTCF0:USTF0",
+    [
+        1562164542332,
+        None,
+        None,
+        "0.00004",
+        "100.0",
+        None,
+        None,
+        None,
+        0.01,
+        0.005,
+    ],
+]
+
+
+class TestPairsInfo:
+    def test_get_pairs_info_includes_futures_by_default(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [[_SPOT_PAIR_ROW], [_FUTURES_PAIR_ROW]]
+        result = ep.get_pairs_info()
+        mock_m.get.assert_called_once_with(
+            "conf/pub:info:pair,pub:info:pair:futures"
+        )
+        assert set(result) == {"BTCUSD", "BTCF0:USTF0"}
+        assert isinstance(result["BTCUSD"], PairInfo)
+        assert result["BTCUSD"].min_order_size == "0.00004"
+        assert result["BTCUSD"].first_trade == 1358182043000
+        assert result["BTCF0:USTF0"].initial_margin == 0.01
+
+    def test_get_pairs_info_spot_only(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [[_SPOT_PAIR_ROW]]
+        result = ep.get_pairs_info(include_futures=False)
+        mock_m.get.assert_called_once_with("conf/pub:info:pair")
+        assert set(result) == {"BTCUSD"}
+
+    def test_get_pairs_info_tolerates_null_first_trade(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [
+            [
+                [
+                    "AAVE:USD",
+                    [
+                        None,
+                        None,
+                        None,
+                        "0.02",
+                        "5000.0",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ],
+                ]
+            ]
+        ]
+        result = ep.get_pairs_info(include_futures=False)
+        assert result["AAVE:USD"].first_trade is None
+        assert result["AAVE:USD"].max_order_size == "5000.0"
+
+    def test_get_pairs_info_empty_blocks(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [[], []]
+        assert ep.get_pairs_info() == {}
 
 
 class TestTickers:
@@ -143,6 +233,71 @@ class TestTickers:
         mock_m.get.assert_called_once_with("ticker/fUSD")
         assert isinstance(result, FundingCurrencyTicker)
 
+    def test_get_t_ticker_exposes_first_trade(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [
+            83724,
+            2.07,
+            83738,
+            1.76,
+            -454,
+            -0.0053,
+            83736,
+            1218.39,
+            85172,
+            83157,
+            1358182043000,
+        ]
+        result = ep.get_t_ticker("tBTCUSD")
+        assert result.low == 83157
+        assert result.first_trade == 1358182043000
+
+    def test_get_f_ticker_exposes_first_trade(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [
+            0.0003,
+            0.00027,
+            120,
+            17038346.04,
+            0.00014,
+            2,
+            3628970.04,
+            -0.00014,
+            -0.4839,
+            0.00015,
+            358211627.47,
+            0.00035,
+            0.000028,
+            None,
+            None,
+            120625392.51,
+            1469734163000,
+        ]
+        result = ep.get_f_ticker("fUSD")
+        assert result.frr_amount_available == 120625392.51
+        assert result.first_trade == 1469734163000
+
+    def test_get_tickers_carries_first_trade(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.get.return_value = [
+            [
+                "tBTCUSD",
+                10000,
+                1.5,
+                10001,
+                2.0,
+                100,
+                0.01,
+                10000,
+                50000,
+                10500,
+                9500,
+                1358182043000,
+            ]
+        ]
+        result = ep.get_tickers(["tBTCUSD"])
+        assert result["tBTCUSD"].first_trade == 1358182043000
+
     def test_get_t_tickers_with_list(self):
         ep, mock_m = _make_endpoint()
         mock_m.get.return_value = [
@@ -194,7 +349,21 @@ class TestTickersHistory:
     def test_get_tickers_history(self):
         ep, mock_m = _make_endpoint()
         mock_m.get.return_value = [
-            ["tBTCUSD", 10000, None, 10001, None, None, None, None, None, None, None, None, 1609459200000]
+            [
+                "tBTCUSD",
+                10000,
+                None,
+                10001,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                1609459200000,
+            ]
         ]
         result = ep.get_tickers_history(["tBTCUSD"])
         mock_m.get.assert_called_once_with(
@@ -213,9 +382,7 @@ class TestTickersHistory:
 class TestTrades:
     def test_get_t_trades(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [123456, 1609459200000, 0.5, 10000]
-        ]
+        mock_m.get.return_value = [[123456, 1609459200000, 0.5, 10000]]
         result = ep.get_t_trades("tBTCUSD")
         mock_m.get.assert_called_once_with(
             "trades/tBTCUSD/hist",
@@ -226,9 +393,7 @@ class TestTrades:
 
     def test_get_f_trades(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [123456, 1609459200000, 1000, 0.0002, 30]
-        ]
+        mock_m.get.return_value = [[123456, 1609459200000, 1000, 0.0002, 30]]
         result = ep.get_f_trades("fUSD")
         mock_m.get.assert_called_once_with(
             "trades/fUSD/hist",
@@ -240,7 +405,7 @@ class TestTrades:
     def test_get_t_trades_with_params(self):
         ep, mock_m = _make_endpoint()
         mock_m.get.return_value = []
-        result = ep.get_t_trades("tBTCUSD", limit=10, sort=-1)
+        ep.get_t_trades("tBTCUSD", limit=10, sort=-1)
         call_kwargs = mock_m.get.call_args
         assert call_kwargs.kwargs["params"]["limit"] == 10
         assert call_kwargs.kwargs["params"]["sort"] == -1
@@ -249,9 +414,7 @@ class TestTrades:
 class TestBook:
     def test_get_t_book(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [10000, 2, 1.5]
-        ]
+        mock_m.get.return_value = [[10000, 2, 1.5]]
         result = ep.get_t_book("tBTCUSD", "P0")
         mock_m.get.assert_called_once_with(
             "book/tBTCUSD/P0", params={"len": None}
@@ -261,21 +424,15 @@ class TestBook:
 
     def test_get_f_book(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [0.0002, 30, 2, 1000]
-        ]
+        mock_m.get.return_value = [[0.0002, 30, 2, 1000]]
         result = ep.get_f_book("fUSD", "P0")
-        mock_m.get.assert_called_once_with(
-            "book/fUSD/P0", params={"len": None}
-        )
+        mock_m.get.assert_called_once_with("book/fUSD/P0", params={"len": None})
         assert len(result) == 1
         assert isinstance(result[0], FundingCurrencyBook)
 
     def test_get_t_raw_book(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [12345, 10000, 1.5]
-        ]
+        mock_m.get.return_value = [[12345, 10000, 1.5]]
         result = ep.get_t_raw_book("tBTCUSD")
         mock_m.get.assert_called_once_with(
             "book/tBTCUSD/R0", params={"len": None}
@@ -285,13 +442,9 @@ class TestBook:
 
     def test_get_f_raw_book(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [12345, 30, 0.0002, 1000]
-        ]
+        mock_m.get.return_value = [[12345, 30, 0.0002, 1000]]
         result = ep.get_f_raw_book("fUSD")
-        mock_m.get.assert_called_once_with(
-            "book/fUSD/R0", params={"len": None}
-        )
+        mock_m.get.assert_called_once_with("book/fUSD/R0", params={"len": None})
         assert len(result) == 1
         assert isinstance(result[0], FundingCurrencyRawBook)
 
@@ -307,9 +460,7 @@ class TestBook:
 class TestStats:
     def test_get_stats_hist(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [
-            [1609459200000, 100]
-        ]
+        mock_m.get.return_value = [[1609459200000, 100]]
         result = ep.get_stats_hist("pos.size:1m:tBTCUSD:long")
         mock_m.get.assert_called_once()
         assert len(result) == 1
@@ -335,7 +486,14 @@ class TestCandles:
 
     def test_get_candles_last(self):
         ep, mock_m = _make_endpoint()
-        mock_m.get.return_value = [1609459200000, 10000, 10100, 10200, 9900, 500]
+        mock_m.get.return_value = [
+            1609459200000,
+            10000,
+            10100,
+            10200,
+            9900,
+            500,
+        ]
         result = ep.get_candles_last("tBTCUSD")
         assert isinstance(result, Candle)
 
@@ -364,10 +522,17 @@ class TestDerivatives:
         # _PH, current_funding, _PH, _PH, mark_price, _PH, _PH, open_interest,
         # _PH, _PH, _PH, clamp_min, clamp_max
         mock_m.get.return_value = [
-            ["tBTCF0:USTF0"] + [None] * 2 + [10000, 10100] + [None] * 2
+            ["tBTCF0:USTF0"]
+            + [None] * 2
+            + [10000, 10100]
+            + [None] * 2
             + [None, 0.0001, 0.0002, None, None, 0.001]
-            + [None] * 2 + [10050] + [None] * 2 + [100000]
-            + [None] * 2 + [None, -0.001, 0.001]
+            + [None] * 2
+            + [10050]
+            + [None] * 2
+            + [100000]
+            + [None] * 2
+            + [None, -0.001, 0.001]
         ]
         result = ep.get_derivatives_status(["tBTCF0:USTF0"])
         mock_m.get.assert_called_once_with(
@@ -388,9 +553,31 @@ class TestDerivatives:
         ep, mock_m = _make_endpoint()
         # 23 labels (no key prefix for history)
         mock_m.get.return_value = [
-            [1609459200000, None, 10000, 10100, None, None, None,
-             0.0001, 0.0002, None, None, 0.001, None, None, 10050,
-             None, None, 100000, None, None, None, -0.001, 0.001]
+            [
+                1609459200000,
+                None,
+                10000,
+                10100,
+                None,
+                None,
+                None,
+                0.0001,
+                0.0002,
+                None,
+                None,
+                0.001,
+                None,
+                None,
+                10050,
+                None,
+                None,
+                100000,
+                None,
+                None,
+                None,
+                -0.001,
+                0.001,
+            ]
         ]
         result = ep.get_derivatives_status_history("tBTCF0:USTF0")
         assert len(result) == 1
@@ -403,8 +590,22 @@ class TestLiquidations:
         # 12 labels: _PH, pos_id, mts, _PH, symbol, amount, base_price,
         #            _PH, is_match, is_market_sold, _PH, liquidation_price
         mock_m.get.return_value = [
-            [[None, 12345, 1609459200000, None, "tBTCUSD", 0.5, 10000,
-              None, 1, 0, None, 9800]]
+            [
+                [
+                    None,
+                    12345,
+                    1609459200000,
+                    None,
+                    "tBTCUSD",
+                    0.5,
+                    10000,
+                    None,
+                    1,
+                    0,
+                    None,
+                    9800,
+                ]
+            ]
         ]
         result = ep.get_liquidations()
         mock_m.get.assert_called_once()
@@ -417,7 +618,18 @@ class TestLeaderboards:
         ep, mock_m = _make_endpoint()
         # 10 labels: mts, _PH, username, ranking, _PH, _PH, value, _PH, _PH, twitter_handle
         mock_m.get.return_value = [
-            [1609459200000, None, "username", 1, None, None, 100000, None, None, "@user"]
+            [
+                1609459200000,
+                None,
+                "username",
+                1,
+                None,
+                None,
+                100000,
+                None,
+                None,
+                "@user",
+            ]
         ]
         result = ep.get_leaderboards_hist("plu_diff:1M:tGLOBAL:USD")
         assert len(result) == 1
@@ -426,7 +638,16 @@ class TestLeaderboards:
     def test_get_leaderboards_last(self):
         ep, mock_m = _make_endpoint()
         mock_m.get.return_value = [
-            1609459200000, None, "username", 1, None, None, 100000, None, None, "@user"
+            1609459200000,
+            None,
+            "username",
+            1,
+            None,
+            None,
+            100000,
+            None,
+            None,
+            "@user",
         ]
         result = ep.get_leaderboards_last("plu_diff:1M:tGLOBAL:USD")
         assert isinstance(result, Leaderboard)
@@ -436,7 +657,20 @@ class TestFundingStats:
     def test_get_funding_stats(self):
         ep, mock_m = _make_endpoint()
         mock_m.get.return_value = [
-            [1609459200000, None, None, 0.0002, 0.00025, None, None, None, None, None, None, None]
+            [
+                1609459200000,
+                None,
+                None,
+                0.0002,
+                0.00025,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
         ]
         result = ep.get_funding_stats("fUSD")
         mock_m.get.assert_called_once()

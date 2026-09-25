@@ -8,6 +8,7 @@ from .notification import _Notification  # noqa: F401
 
 __serializers__ = [
     "PlatformStatus",
+    "PairInfo",
     "TradingPairTicker",
     "FundingCurrencyTicker",
     "TickersHistory",
@@ -64,6 +65,29 @@ PlatformStatus = generate_labeler_serializer(
     name="PlatformStatus", klass=dataclasses.PlatformStatus, labels=["status"]
 )
 
+# pub:info:pair rows are ["<PAIR>", [ ...details ]]; flat=True splices the
+# pair name and the detail array into one positional sequence. Spot rows
+# carry 12 details and futures rows 10 — the trailing spot placeholders are
+# beyond the last mapped label and are therefore ignored.
+PairInfo = generate_labeler_serializer(
+    name="PairInfo",
+    klass=dataclasses.PairInfo,
+    labels=[
+        "pair",
+        "first_trade",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "min_order_size",
+        "max_order_size",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "initial_margin",
+        "min_margin",
+    ],
+    flat=True,
+)
+
 TradingPairTicker = generate_labeler_serializer(
     name="TradingPairTicker",
     klass=dataclasses.TradingPairTicker,
@@ -78,7 +102,9 @@ TradingPairTicker = generate_labeler_serializer(
         "volume",
         "high",
         "low",
+        "first_trade",
     ],
+    optional_tail=1,
 )
 
 FundingCurrencyTicker = generate_labeler_serializer(
@@ -101,7 +127,9 @@ FundingCurrencyTicker = generate_labeler_serializer(
         "_PLACEHOLDER",
         "_PLACEHOLDER",
         "frr_amount_available",
+        "first_trade",
     ],
+    optional_tail=1,
 )
 
 TickersHistory = generate_labeler_serializer(

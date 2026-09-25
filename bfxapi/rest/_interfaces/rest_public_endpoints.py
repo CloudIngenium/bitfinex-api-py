@@ -14,6 +14,7 @@ from bfxapi.types import (
     FxRate,
     Leaderboard,
     Liquidation,
+    PairInfo,
     PlatformStatus,
     Statistic,
     TickersHistory,
@@ -32,6 +33,31 @@ class RestPublicEndpoints(Interface):
 
     def get_platform_status(self) -> PlatformStatus:
         return serializers.PlatformStatus.parse(*self._m.get("platform/status"))
+
+    def get_pairs_info(
+        self, *, include_futures: bool = True
+    ) -> dict[str, PairInfo]:
+        """Trading-pair metadata from ``pub:info:pair``.
+
+        Carries each pair's minimum and maximum order size, its margin
+        requirements and — since the 2026-09-23 API update — the timestamp
+        of its first trade.
+
+        :param include_futures: also request ``pub:info:pair:futures``.
+        :return: pair symbol (e.g. ``"BTCUSD"``) mapped to its PairInfo.
+        """
+        config = "pub:info:pair"
+
+        if include_futures:
+            config += ",pub:info:pair:futures"
+
+        blocks = cast(list[list[Any]], self._m.get(f"conf/{config}"))
+
+        return {
+            cast(str, sub_data[0]): serializers.PairInfo.parse(*sub_data)
+            for block in blocks
+            for sub_data in block
+        }
 
     def get_tickers(
         self, symbols: list[str]
