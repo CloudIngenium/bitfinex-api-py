@@ -209,6 +209,12 @@ class BfxWebSocketClient(Connection):
 
     async def __connect(self) -> None:
         async with websockets.client.connect(self._host) as websocket:
+            # A new socket is a new connection scope: without this the
+            # once-per-connection events (open, authenticated, and every
+            # snapshot) stay latched from the previous one, and a recovered
+            # client silently never re-announces its state.
+            self.__event_emitter.reset_connection_scope()
+
             if self.__reconnection:
                 self.__logger.warning(
                     "Reconnection attempt successful (no."
