@@ -1,14 +1,13 @@
 """Tests for BfxWebSocketBucket: subscription accounting and the message loop.
 
 The bucket is the only place where a decoded server frame becomes a typed
-event, so the fake below stands in for the socket rather than for the
-bucket: every assertion goes through `subscribe`/`start` exactly as the
-real client drives them.
+event, so the shared fakes in conftest stand in for the socket rather than
+for the bucket: every assertion goes through `subscribe`/`start` exactly as
+the real client drives them.
 """
 
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 from pyee import EventEmitter
@@ -17,63 +16,12 @@ from bfxapi._utils.financial_json import FinancialTokenDecimal
 from bfxapi.websocket._client.bfx_websocket_bucket import BfxWebSocketBucket
 from bfxapi.websocket.exceptions import ConnectionNotOpen
 
+from .conftest import FakeConnect, FakeWebSocket
+
 _HOST = "wss://example.invalid/ws/2"
 
 # A trading-pair ticker payload: 10 values, the 11th (first_trade) optional.
 _TICKER_STREAM = [0.1, 1.0, 0.2, 2.0, 0.01, 0.1, 0.15, 100.0, 0.3, 0.05]
-
-
-class FakeWebSocket:
-    """A socket that records what was sent and replays canned frames."""
-
-    def __init__(self, incoming: list[str] | None = None, hold: bool = False):
-        self.sent: list[str] = []
-        self.closed: tuple[int, str] | None = None
-        self.state = SimpleNamespace(name="OPEN")
-        self._incoming = list(incoming or [])
-        self._hold = hold
-
-    async def send(self, message: str) -> None:
-        self.sent.append(message)
-
-    async def close(self, code: int = 1000, reason: str = "") -> None:
-        self.closed = (code, reason)
-        self.state = SimpleNamespace(name="CLOSED")
-
-    async def __aiter__(self):
-        for message in self._incoming:
-            yield message
-        if self._hold:
-            await asyncio.Event().wait()
-
-    @property
-    def events(self) -> list[dict]:
-        return [json.loads(message) for message in self.sent]
-
-
-class _FakeConnect:
-    def __init__(self, websocket: FakeWebSocket) -> None:
-        self._websocket = websocket
-
-    async def __aenter__(self) -> FakeWebSocket:
-        return self._websocket
-
-    async def __aexit__(self, *_: object) -> bool:
-        return False
-
-
-@pytest.fixture
-def connect(monkeypatch):
-    """Hand `start()` a socket of the test's choosing."""
-
-    def _install(websocket: FakeWebSocket) -> FakeWebSocket:
-        monkeypatch.setattr(
-            "websockets.asyncio.client.connect",
-            lambda *_a, **_k: _FakeConnect(websocket),
-        )
-        return websocket
-
-    return _install
 
 
 def make_bucket(**kwargs) -> tuple[BfxWebSocketBucket, EventEmitter, list]:
@@ -115,7 +63,7 @@ class TestSubscriptionAccounting:
         """
         bucket, _, _ = make_bucket()
         websocket = connect(FakeWebSocket())
-        async with _FakeConnect(websocket) as socket:
+        async with FakeConnect(websocket) as socket:
             bucket._websocket = socket
             for index in range(25):
                 await bucket.subscribe("ticker", sub_id=f"s{index}")
