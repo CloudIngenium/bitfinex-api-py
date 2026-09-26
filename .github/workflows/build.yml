@@ -20,10 +20,14 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      # tests/ is linted too. It was not until 2026-09-26, and the drift was
+      # already there: an UP035 and an unsorted import block sat in
+      # tests/test_wire_contract.py from the day it was written, invisible
+      # because the only thing that would have reported them did not look.
       - name: Run ruff linter
-        run: ruff check bfxapi/
+        run: ruff check bfxapi/ tests/
       - name: Run ruff formatter check
-        run: ruff format --check bfxapi/
+        run: ruff format --check bfxapi/ tests/
       - name: Run mypy type checking
         run: mypy bfxapi/
 

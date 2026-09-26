@@ -44,8 +44,9 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -184,11 +185,7 @@ def test_no_label_reads_past_the_declared_wire(c: WireContract) -> None:
     be wrong even though nothing would go None.
     """
     parsed = c.parse(c.arity)
-    empty = [
-        name
-        for name, value in vars(parsed).items()
-        if value is None
-    ]
+    empty = [name for name, value in vars(parsed).items() if value is None]
     assert not empty, (
         f"{c.name}: {empty} came back None from a row of {c.arity} non-None "
         f"sentinels, so the serializer maps at least one label past the end of "
