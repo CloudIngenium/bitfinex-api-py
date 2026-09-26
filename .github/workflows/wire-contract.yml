@@ -1,0 +1,60 @@
+name: Bitfinex wire contract
+
+# Runs the LIVE half of tests/test_wire_contract.py against api-pub.bitfinex.com.
+#
+# Those checks are opt-IN (LIVE_WIRE=1), so ordinary CI never reaches the network
+# and no required check depends on a third party's uptime. This workflow is what
+# makes sure they are nonetheless RUN: an opt-in check with nothing opting in is
+# just a slower way of never running it.
+#
+# A red run means Bitfinex changed a payload's width. That is NOT necessarily a
+# bug here — it is the notification that the fixtures, the contract, and possibly
+# a serializer now need attention. The sibling forks had three fixtures rot
+# through exactly that on 2026-09-23, each one caught only because a human read
+# an announcement.
+#
+# GITHUB-HOSTED on purpose. This repo is PUBLIC, and every CloudIngenium
+# self-hosted runner group sets allows_public_repositories=false — a self-hosted
+# job from here is never assigned, so it queues forever rather than failing. It
+# also draws on the free public-repo minutes, not the org's billed pool. Matches
+# build.yml, deliberately.
+
+on:
+  schedule:
+    # Wednesdays, offset off the hour so the fleet does not stampede one slot.
+    - cron: "55 6 * * 3"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'tests/test_wire_contract.py'
+      - 'bfxapi/types/serializers.py'
+      - 'bfxapi/types/dataclasses.py'
+      - '.github/workflows/wire-contract.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wire-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-wire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Check the declared wire against the live API
+        env:
+          LIVE_WIRE: '1'
+        # --no-cov: this file exercises serializers, not the client, so the
+        # project-wide 85% floor is neither meaningful nor achievable here. The
+        # floor still gates the real suite in build.yml.
+        run: python -m pytest tests/test_wire_contract.py -v --no-cov
