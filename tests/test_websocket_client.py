@@ -169,6 +169,31 @@ class TestSubscriptionRouting:
             with pytest.raises(SubIdError, match="must be unique"):
                 await client.subscribe("ticker", sub_id="abc", symbol="tETHUSD")
 
+    async def test_a_sub_id_is_never_both_taken_and_unknown(self, connect_each):
+        """The gap between `subscribe` and its confirmation used to be a trap.
+
+        The duplicate check reads `bucket.ids`, which counts requests in
+        flight, so the sub_id is taken the moment the frame leaves. But
+        `unsubscribe` read `bucket.has`, which counted only confirmed ones -
+        so a caller that changed its mind inside that window could neither
+        cancel the subscription nor ask for it again, and no amount of
+        retrying would clear it.
+
+        The window is not one round trip: a reconnect moves every
+        subscription the client holds back to pending.
+        """
+        connect_each()
+        client, _ = make_client()
+        async with opened(client):
+            await client.subscribe("ticker", sub_id="abc", symbol="tBTCUSD")
+
+            with pytest.raises(SubIdError, match="must be unique"):
+                await client.subscribe("ticker", sub_id="abc", symbol="tETHUSD")
+
+            # Taken, therefore cancellable - and reusable once cancelled.
+            await client.unsubscribe("abc")
+            await client.subscribe("ticker", sub_id="abc", symbol="tETHUSD")
+
     async def test_a_bucket_is_filled_before_a_second_one_is_opened(
         self, connect_each
     ):

@@ -71,6 +71,15 @@ class FakeWebSocket:
             )
         )
 
+    def deliver(self, frame: str) -> None:
+        """Hand the bucket one more frame after its loop is already running.
+
+        `incoming` can only stage frames that exist before `start`; a test
+        about what happens to a request made mid-connection has to be able to
+        answer it mid-connection.
+        """
+        self._outbox.put_nowait(frame)
+
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = (code, reason)
         self.close_code, self.close_reason = code, reason

@@ -37,6 +37,7 @@ class BfxWebSocketBucket(Connection):
         self.__event_emitter = event_emitter
         self.__pendings: list[dict[str, Any]] = []
         self.__subscriptions: dict[int, Subscription] = {}
+        self.__cancellations: set[str] = set()
 
         self.__condition = asyncio.locks.Condition()
 
@@ -75,7 +76,7 @@ class BfxWebSocketBucket(Connection):
 
                 if isinstance(message, dict):
                     if message["event"] == "subscribed":
-                        self.__on_subscribed(message)
+                        await self.__on_subscribed(message)
 
                 if isinstance(message, list):
                     if (
@@ -85,25 +86,43 @@ class BfxWebSocketBucket(Connection):
                     ):
                         self.__handler.handle(subscription, message[1:])
 
-    def __on_subscribed(self, message: dict[str, Any]) -> None:
+    async def __on_subscribed(self, message: dict[str, Any]) -> None:
         chan_id = cast(int, message["chan_id"])
+        sub_id = cast(str, message["sub_id"])
+
+        self.__pendings = [
+            pending for pending in self.__pendings if pending["subId"] != sub_id
+        ]
+
+        if sub_id in self.__cancellations:
+            # Unsubscribed while still pending. The subscribe frame was
+            # already on the wire, so the server opened the channel anyway -
+            # and this confirmation is the first moment a chan_id exists to
+            # close it with. Without this the channel would stream forever
+            # into a consumer that believes it cancelled the subscription.
+            self.__cancellations.discard(sub_id)
+
+            await self._websocket.send(
+                message=json.dumps({"event": "unsubscribe", "chanId": chan_id})
+            )
+
+            return
 
         subscription = cast(
             Subscription,
             _strip(message, keys=["chan_id", "event", "pair", "currency"]),
         )
 
-        self.__pendings = [
-            pending
-            for pending in self.__pendings
-            if pending["subId"] != message["sub_id"]
-        ]
-
         self.__subscriptions[chan_id] = subscription
 
         self.__event_emitter.emit("subscribed", subscription)
 
     async def __recover_state(self) -> None:
+        # A cancellation waits for a confirmation that can only arrive on the
+        # socket that has just gone; the pending it referred to was dropped
+        # when it was recorded, so nothing re-requests it either.
+        self.__cancellations.clear()
+
         for pending in self.__pendings:
             await self._websocket.send(message=json.dumps(pending))
 
@@ -137,6 +156,16 @@ class BfxWebSocketBucket(Connection):
 
     @Connection._require_websocket_connection
     async def unsubscribe(self, sub_id: str) -> None:
+        for pending in self.__pendings:
+            if pending["subId"] == sub_id:
+                # No chan_id exists yet, so there is nothing to unsubscribe
+                # from: drop the request here and close the channel the moment
+                # the server confirms it (see __on_subscribed).
+                self.__pendings.remove(pending)
+                self.__cancellations.add(sub_id)
+
+                return
+
         for chan_id, subscription in list(self.__subscriptions.items()):
             if subscription["sub_id"] == sub_id:
                 unsubscription = {"event": "unsubscribe", "chanId": chan_id}
@@ -147,6 +176,9 @@ class BfxWebSocketBucket(Connection):
 
     @Connection._require_websocket_connection
     async def resubscribe(self, sub_id: str) -> None:
+        # Only confirmed subscriptions are reissued. A pending one is already
+        # being established, and its frame has not been answered yet: sending
+        # it again would open two channels under a single sub_id.
         for subscription in list(self.__subscriptions.values()):
             if subscription["sub_id"] == sub_id:
                 await self.unsubscribe(sub_id)
@@ -158,11 +190,20 @@ class BfxWebSocketBucket(Connection):
         await self._websocket.close(code, reason)
 
     def has(self, sub_id: str) -> bool:
-        for subscription in self.__subscriptions.values():
-            if subscription["sub_id"] == sub_id:
-                return True
+        # `ids` counts pendings, so a duplicate `subscribe` is refused from the
+        # instant the frame is sent. `has` used to count only confirmed ones,
+        # which left a sub_id that was simultaneously "taken" (SubIdError) and
+        # "unknown" (UnknownSubscriptionError) - unusable and uncancellable.
+        # The window is not a few milliseconds either: __recover_state moves
+        # EVERY subscription back to pending, so after each reconnect the whole
+        # set is unreachable until the server has confirmed it.
+        if any(pending["subId"] == sub_id for pending in self.__pendings):
+            return True
 
-        return False
+        return any(
+            subscription["sub_id"] == sub_id
+            for subscription in self.__subscriptions.values()
+        )
 
     async def wait(self) -> None:
         async with self.__condition:
