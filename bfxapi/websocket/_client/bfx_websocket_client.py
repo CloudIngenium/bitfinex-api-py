@@ -14,6 +14,7 @@ import websockets.frames
 from pyee import Handler
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
 
+from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_encoder import JSONEncoder
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.websocket._connection import Connection
@@ -82,8 +83,13 @@ class BfxWebSocketClient(Connection):
         credentials: _Credentials | None = None,
         timeout: int | None = 60 * 15,
         logger: Logger = _DEFAULT_LOGGER,
+        lossless_financial_decode: bool = False,
     ) -> None:
         super().__init__(host)
+        self.__lossless_financial_decode = lossless_financial_decode
+        self.__decode_options = financial_decode_options(
+            lossless_financial_decode
+        )
 
         self.__credentials, self.__timeout, self.__logger = (
             credentials,
@@ -193,7 +199,10 @@ class BfxWebSocketClient(Connection):
                             "clients need to reconnect (server sent 20051)."
                         )
 
-                    if self.__timeout:
+                    # `None` is the documented way to retry forever; a
+                    # falsy check also swallowed `timeout=0`, turning
+                    # "give up at once" into "never give up".
+                    if self.__timeout is not None:
                         asyncio.get_event_loop().call_later(
                             self.__timeout, _on_timeout
                         )
@@ -247,6 +256,12 @@ class BfxWebSocketClient(Connection):
 
     async def __connect(self) -> None:
         async with websockets.asyncio.client.connect(self._host) as websocket:
+            # A new socket is a new connection scope: without this the
+            # once-per-connection events (open, authenticated, every
+            # snapshot) stay latched from the previous one and a recovered
+            # client silently never re-announces its state.
+            self.__event_emitter.reset_connection_scope()
+
             if self.__reconnection:
                 self.__logger.warning(
                     "Reconnection attempt successful (no."
@@ -276,7 +291,7 @@ class BfxWebSocketClient(Connection):
                 await self._websocket.send(authentication)
 
             async for _message in self._websocket:
-                message = json.loads(_message)
+                message = json.loads(_message, **self.__decode_options)
 
                 if isinstance(message, dict):
                     if message["event"] == "info" and "version" in message:
@@ -314,7 +329,11 @@ class BfxWebSocketClient(Connection):
                     self.__handler.handle(message[1], message[2])
 
     async def __new_bucket(self) -> BfxWebSocketBucket:
-        bucket = BfxWebSocketBucket(self._host, self.__event_emitter)
+        bucket = BfxWebSocketBucket(
+            self._host,
+            self.__event_emitter,
+            lossless_financial_decode=self.__lossless_financial_decode,
+        )
 
         self.__buckets[bucket] = asyncio.create_task(bucket.start())
 

@@ -99,3 +99,71 @@ class TestBfxEventEmitter:
 
         result = ee.on("order_new", my_handler)
         assert result is my_handler
+
+
+class TestConnectionScopeReset:
+    """`once per connection` has to mean the connection, not the client.
+
+    The ledger backing both deduplication rules was only ever appended to,
+    so a reconnected client kept suppressing `open`, `authenticated` and
+    every snapshot while continuing to deliver the updates layered on top
+    of them - a consumer applying deltas to state it is never told to
+    replace.
+    """
+
+    def test_once_per_connection_events_are_re_armed(self):
+        emitter = BfxEventEmitter()
+        seen = []
+        emitter.on("open", lambda: seen.append("open"))
+
+        emitter.emit("open")
+        emitter.emit("open")
+        assert seen == ["open"], "still deduplicated within one connection"
+
+        emitter.reset_connection_scope()
+        emitter.emit("open")
+
+        assert seen == ["open", "open"]
+
+    def test_snapshots_are_re_announced_after_a_reset(self):
+        emitter = BfxEventEmitter()
+        seen = []
+        emitter.on("wallet_snapshot", lambda payload: seen.append(payload))
+
+        emitter.emit("wallet_snapshot", ["before"])
+        emitter.emit("wallet_snapshot", ["ignored"])
+        emitter.reset_connection_scope()
+        emitter.emit("wallet_snapshot", ["after"])
+
+        assert seen == [["before"], ["after"]]
+
+    def test_once_per_subscription_events_are_re_armed(self):
+        """A reconnect re-subscribes under the same sub_id.
+
+        The server answers with a fresh `subscribed` and a fresh snapshot,
+        so keying the ledger on sub_id alone would drop both and leave the
+        consumer's book permanently stale.
+        """
+        emitter = BfxEventEmitter()
+        seen = []
+        emitter.on("subscribed", lambda payload: seen.append(payload))
+
+        emitter.emit("subscribed", {"sub_id": "abc"})
+        emitter.emit("subscribed", {"sub_id": "abc"})
+        assert len(seen) == 1
+
+        emitter.reset_connection_scope()
+        emitter.emit("subscribed", {"sub_id": "abc"})
+
+        assert len(seen) == 2
+
+    def test_reset_on_a_fresh_emitter_changes_nothing(self):
+        emitter = BfxEventEmitter()
+        seen = []
+        emitter.on("open", lambda: seen.append("open"))
+
+        emitter.reset_connection_scope()
+        emitter.emit("open")
+        emitter.emit("open")
+
+        assert seen == ["open"]
