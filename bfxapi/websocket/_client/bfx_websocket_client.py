@@ -199,7 +199,10 @@ class BfxWebSocketClient(Connection):
                             "clients need to reconnect (server sent 20051)."
                         )
 
-                    if self.__timeout:
+                    # `None` is the documented way to retry forever; a
+                    # falsy check also swallowed `timeout=0`, turning
+                    # "give up at once" into "never give up".
+                    if self.__timeout is not None:
                         asyncio.get_event_loop().call_later(
                             self.__timeout, _on_timeout
                         )
@@ -253,6 +256,12 @@ class BfxWebSocketClient(Connection):
 
     async def __connect(self) -> None:
         async with websockets.asyncio.client.connect(self._host) as websocket:
+            # A new socket is a new connection scope: without this the
+            # once-per-connection events (open, authenticated, every
+            # snapshot) stay latched from the previous one and a recovered
+            # client silently never re-announces its state.
+            self.__event_emitter.reset_connection_scope()
+
             if self.__reconnection:
                 self.__logger.warning(
                     "Reconnection attempt successful (no."
