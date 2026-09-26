@@ -193,7 +193,10 @@ class BfxWebSocketClient(Connection):
                             "clients need to reconnect (server sent 20051)."
                         )
 
-                    if self.__timeout:
+                    # `None` is the documented way to retry forever; a falsy
+                    # check also swallowed `timeout=0`, turning "give up at
+                    # once" into "never give up".
+                    if self.__timeout is not None:
                         asyncio.get_event_loop().call_later(
                             self.__timeout, _on_timeout
                         )
