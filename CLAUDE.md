@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-CloudIngenium fork of the official Bitfinex Python API client (v2). Published as `bitfinex-api-py` v6.0.0. This is the core library used by BfxLendingBot for all Bitfinex REST and WebSocket communication.
+CloudIngenium fork of the official Bitfinex Python API client (v2). Published as `bitfinex-api-py`. This is the core library used by BfxLendingBot for all Bitfinex REST and WebSocket communication.
 
 ## Stack
 
@@ -10,7 +10,7 @@ CloudIngenium fork of the official Bitfinex Python API client (v2). Published as
 - **Build system:** Hatchling
 - **Lint/Format:** Ruff (line-length 80, pycodestyle + pyflakes + bugbear + pyupgrade + isort)
 - **Type checking:** mypy (strict mode)
-- **Test:** pytest + pytest-asyncio + pytest-cov (coverage threshold: 80%)
+- **Test:** pytest + pytest-asyncio + pytest-cov (fail-under set in `pyproject.toml` `addopts`)
 - **Pre-commit:** Ruff linting and formatting hooks
 
 ## Build & Dev
@@ -71,7 +71,7 @@ examples/               # Usage examples (REST + WebSocket)
 
 - Import types from `bfxapi.types.dataclasses` (never `bfxapi.models` — removed in v4)
 - Use `Decimal` for monetary values, never `float`
-- WebSocket preferred over REST for real-time data (no rate limits)
+- WebSocket preferred over REST for real-time data (it does not draw on the REST request budget; each connection holds at most 25 subscriptions — see `bfx_websocket_bucket.py`)
 - REST rate limit: 90 req/5min on private endpoints
 - Never hardcode API keys — use environment variables
 - asyncio-based WebSocket client; use `bfx.wss.run()` or `await bfx.wss.start()`
