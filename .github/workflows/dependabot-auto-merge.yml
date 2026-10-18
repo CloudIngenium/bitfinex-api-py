@@ -5,13 +5,17 @@ name: Dependabot Auto-Merge
 # PRIVATE callers, so a caller here would fail at resolution time with 0 jobs on every
 # dependabot PR. This repo is public, so it carries the logic itself.
 #
-# SAFETY — this uses pull_request_target, which runs with a write-capable token, so it
-# deliberately NEVER checks out the PR. No untrusted code from the pull request is
-# executed; the job only calls the gh CLI against the PR's API. That is what makes the
-# pattern safe on a public repo.
+# TRIGGER — pull_request, not pull_request_target (GitHub's documented Dependabot
+# auto-merge pattern). A run Dependabot triggers gets the write token the permissions
+# block below grants; a fork PR still gets a read-only token and no secrets. GitHub
+# disables pull_request_target on public repos by default from 2026-11-02 (Actions
+# workflow execution protections), which would have stopped this workflow.
+#
+# SAFETY — the job never checks out the PR and runs no code from it; it only calls the
+# gh CLI against the PR's API.
 
 on:
-  pull_request_target:
+  pull_request:
 
 permissions:
   contents: write
