@@ -33,12 +33,32 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
+    # Branch protection requires a check named exactly "test", and a matrix
+    # job reports "test (3.12)" and so on instead. This job keeps the name and
+    # passes only when every interpreter passed: `if: always()` stops a
+    # failed matrix from turning it into a skipped check, which GitHub would
+    # count as passing.
+    needs: test-matrix
+    if: always()
+    steps:
+      - name: Every Python version passed
+        env:
+          MATRIX_RESULT: ${{ needs.test-matrix.result }}
+        run: test "$MATRIX_RESULT" = "success"
+
+  test-matrix:
+    name: test (${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
-      - name: Set up Python 3.13
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6.2.0
         with:
-          python-version: "3.13"
+          python-version: "${{ matrix.python-version }}"
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Verify import

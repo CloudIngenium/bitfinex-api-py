@@ -2,6 +2,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
+from inspect import get_annotations
 from typing import Any, Generic, TypeVar, cast
 
 T = TypeVar("T", bound="_Type")
@@ -149,7 +150,9 @@ def compose(
 
 def partial(cls: type[Any]) -> type[Any]:
     def __init__(self: Any, **kwargs: Any) -> None:
-        for annotation in self.__annotations__.keys():
+        # Python 3.14 (PEP 649) no longer exposes __annotations__ on an
+        # instance; read the decorated class's own annotations instead.
+        for annotation in get_annotations(cls).keys():
             if annotation not in kwargs:
                 self.__setattr__(annotation, None)
             else:
