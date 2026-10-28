@@ -92,13 +92,21 @@ class Connection(ABC):
 
     @staticmethod
     def _get_authentication_message(
-        api_key: str, api_secret: str, filters: list[str] | None = None
+        api_key: str,
+        api_secret: str,
+        filters: list[str] | None = None,
+        dms: int | None = None,
     ) -> str:
         message: dict[str, Any] = {
             "event": "auth",
             "filter": filters,
             "apiKey": api_key,
         }
+
+        # Dead-man switch: with dms=4 Bitfinex cancels every order of the
+        # session when the authenticated socket closes. Omitted when unset.
+        if dms is not None:
+            message["dms"] = dms
 
         message["authNonce"] = time.time_ns() // 1_000
 

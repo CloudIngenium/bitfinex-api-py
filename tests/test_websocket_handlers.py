@@ -434,6 +434,37 @@ class TestPublicChannelsHandler:
         assert args[0][0] == "liquidation_feed_update"
         assert isinstance(args[0][2], dataclasses.Liquidation)
 
+    def test_liquidation_feed_emits_every_entry(self):
+        subscription = {
+            "channel": "status",
+            "sub_id": "abc",
+            "key": "liq:global",
+        }
+
+        def entry(pos_id: int) -> list[object]:
+            return [
+                None,
+                pos_id,
+                1000000,
+                None,
+                "tBTCUSD",
+                0.5,
+                50000.0,
+                None,
+                1,
+                0,
+                None,
+                49000.0,
+            ]
+
+        # One frame carrying a cascade of three liquidations.
+        self.handler.handle(subscription, [[entry(1), entry(2), entry(3)]])
+
+        calls = self.ee.emit.call_args_list
+        assert [c[0][0] for c in calls] == ["liquidation_feed_update"] * 3
+        assert [c[0][2].pos_id for c in calls] == [1, 2, 3]
+        assert all(c[0][1] is subscription for c in calls)
+
     def test_checksum(self):
         subscription = {
             "channel": "book",

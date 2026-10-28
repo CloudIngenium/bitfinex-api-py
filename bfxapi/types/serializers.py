@@ -510,7 +510,7 @@ Ledger = generate_labeler_serializer(
     labels=[
         "id",
         "currency",
-        "_PLACEHOLDER",
+        "wallet",
         "mts",
         "_PLACEHOLDER",
         "amount",

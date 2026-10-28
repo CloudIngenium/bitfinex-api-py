@@ -255,18 +255,23 @@ class RestAuthEndpoints(Interface):
         start: str | None = None,
         end: str | None = None,
         limit: int | None = None,
+        wallet: Literal["exchange", "margin", "funding"] | None = None,
     ) -> list[Ledger]:
         if currency is None:
             endpoint = "auth/r/ledgers/hist"
         else:
             endpoint = f"auth/r/ledgers/{currency}/hist"
 
-        body = {
+        body: dict[str, Any] = {
             "category": category,
             "start": start,
             "end": end,
             "limit": limit,
         }
+
+        # Sent only when asked for, so the default request body is unchanged.
+        if wallet is not None:
+            body["wallet"] = wallet
 
         return [
             serializers.Ledger.parse(*sub_data)
@@ -364,7 +369,8 @@ class RestAuthEndpoints(Interface):
         end: str | None = None,
         limit: int | None = None,
     ) -> list[PositionAudit]:
-        body = {"ids": ids, "start": start, "end": end, "limit": limit}
+        # The API field is `id` (array of position ids); `ids` was ignored.
+        body = {"id": ids, "start": start, "end": end, "limit": limit}
 
         return [
             serializers.PositionAudit.parse(*sub_data)
@@ -449,15 +455,17 @@ class RestAuthEndpoints(Interface):
 
     def toggle_auto_renew(
         self,
-        status: bool,
+        status: bool | int,
         currency: str,
         *,
-        amount: str | None = None,
-        rate: int | None = None,
+        amount: str | float | Decimal | None = None,
+        rate: str | float | Decimal | None = None,
         period: int | None = None,
     ) -> Notification[FundingAutoRenew]:
+        # The API takes status as integer 1/0 and rate as a decimal
+        # percentage (0 renews at FRR), not a bool and an int.
         body = {
-            "status": status,
+            "status": int(status),
             "currency": currency,
             "amount": amount,
             "rate": rate,
