@@ -1,15 +1,20 @@
 """Retry with exponential backoff for Bitfinex REST API calls.
 
-Understands Bitfinex-specific error patterns and applies appropriate
-backoff strategies.
+Errors are classified by type. A write whose outcome is unknown (it may
+already have been applied: a read timeout, a connection lost mid-request, a
+5xx with no error body) is never retried unless the caller declares the call
+`idempotent=True`; reconcile it instead (by cid for orders, by listing offers
+for funding). The old message-keyword fallback ("timeout", "connection",
+"nonce"...) also applies only to calls declared idempotent.
 
 Example::
 
     from bfxapi.rest.retry import retry_with_backoff
 
-    result = await retry_with_backoff(
-        lambda: client.rest.get_wallets(),
+    wallets = retry_with_backoff(
+        lambda: client.rest.auth.get_wallets(),
         max_attempts=5,
+        idempotent=True,  # a read: safe to send again
     )
 """
 
@@ -20,40 +25,67 @@ import logging
 from collections.abc import Callable
 from typing import TypeVar
 
+import requests
+
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.rest.exceptions import (
     GenericError,
     InsufficientFundsError,
     NetworkError,
+    NonceError,
     RateLimitError,
+    RequestParameterError,
+    UnexpectedApiError,
 )
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+_KEYWORDS = ("timeout", "connection", "reset", "refused")
 
-def is_retryable(error: BaseException) -> bool:
-    """Check if an error is worth retrying."""
-    if isinstance(error, RateLimitError):
+# Bitfinex rejected these before applying anything: resending is safe even
+# for a write.
+_ALWAYS_RETRYABLE = (RateLimitError, NonceError)
+
+# Resending cannot change the answer.
+_NEVER_RETRYABLE = (
+    InvalidCredentialError,
+    InsufficientFundsError,
+    RequestParameterError,
+    UnexpectedApiError,
+)
+
+# Raised before a connection existed, so nothing was sent.
+_NEVER_CONNECTED = (ConnectionRefusedError, requests.exceptions.ConnectTimeout)
+
+
+def is_retryable(error: BaseException, *, idempotent: bool = False) -> bool:
+    """Check if an error is worth retrying.
+
+    Args:
+        error: The exception the call raised.
+        idempotent: The call is safe to repeat (a read, or a write the
+            caller deduplicates). Only then is an outcome-unknown error
+            retried, and only then does a message keyword count.
+    """
+    if isinstance(error, _ALWAYS_RETRYABLE):
         return True
     if isinstance(error, NetworkError):
+        if error.outcome_unknown:
+            return idempotent
         return error.retryable
-    if isinstance(error, InvalidCredentialError):
+    if isinstance(error, _NEVER_RETRYABLE):
         return False
-    if isinstance(error, InsufficientFundsError):
+    if isinstance(error, _NEVER_CONNECTED):
+        return True
+    if not idempotent:
         return False
-    if isinstance(error, GenericError):
-        msg = str(error).lower()
-        # Nonce errors are transient
-        if "nonce" in msg:
-            return True
-        return False
-    # Network-level errors from requests
+    # The message-keyword fallback of earlier versions, unchanged.
     msg = str(error).lower()
-    return any(
-        kw in msg for kw in ("timeout", "connection", "reset", "refused")
-    )
+    if isinstance(error, GenericError):
+        return "nonce" in msg
+    return any(kw in msg for kw in _KEYWORDS)
 
 
 def get_backoff_delay(
@@ -66,11 +98,16 @@ def get_backoff_delay(
     if isinstance(error, RateLimitError):
         return min(error.retry_after_ms / 1000.0, max_delay)
 
+    if isinstance(error, NonceError):
+        return 1.0
+
     msg = str(error).lower()
     if "nonce" in msg:
         return 1.0
 
     if isinstance(error, NetworkError):
+        if error.retry_after_ms is not None:
+            return min(error.retry_after_ms / 1000.0, max_delay)
         return min(base_delay * (attempt + 1), 60.0)
 
     # Default: exponential backoff
@@ -83,6 +120,8 @@ def retry_with_backoff(
     max_attempts: int = 5,
     base_delay: float = 1.0,
     max_delay: float = 300.0,
+    *,
+    idempotent: bool = False,
 ) -> T:
     """Retry a synchronous function with exponential backoff.
 
@@ -91,6 +130,9 @@ def retry_with_backoff(
         max_attempts: Maximum number of attempts.
         base_delay: Base delay in seconds for backoff.
         max_delay: Maximum delay cap in seconds.
+        idempotent: `fn` is safe to repeat. Leave False for writes (order,
+            offer, transfer submits): an error whose outcome is unknown is
+            then raised at once instead of resent.
 
     Returns:
         Result of the function.
@@ -111,7 +153,7 @@ def retry_with_backoff(
             if attempt == max_attempts - 1:
                 raise
 
-            if not is_retryable(e):
+            if not is_retryable(e, idempotent=idempotent):
                 raise
 
             delay = get_backoff_delay(e, attempt, base_delay, max_delay)
@@ -132,6 +174,8 @@ async def async_retry_with_backoff(
     max_attempts: int = 5,
     base_delay: float = 1.0,
     max_delay: float = 300.0,
+    *,
+    idempotent: bool = False,
 ) -> T:
     """Retry a synchronous function with async sleep between attempts.
 
@@ -143,6 +187,7 @@ async def async_retry_with_backoff(
         max_attempts: Maximum number of attempts.
         base_delay: Base delay in seconds for backoff.
         max_delay: Maximum delay cap in seconds.
+        idempotent: `fn` is safe to repeat; see `retry_with_backoff`.
 
     Returns:
         Result of the function.
@@ -161,7 +206,7 @@ async def async_retry_with_backoff(
             if attempt == max_attempts - 1:
                 raise
 
-            if not is_retryable(e):
+            if not is_retryable(e, idempotent=idempotent):
                 raise
 
             delay = get_backoff_delay(e, attempt, base_delay, max_delay)

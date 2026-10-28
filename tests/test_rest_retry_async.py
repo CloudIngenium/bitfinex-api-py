@@ -91,13 +91,15 @@ class TestWhenItRetries:
 
     @pytest.mark.asyncio
     async def test_a_generic_error_backs_off_exponentially(self, no_sleeping):
-        # Retryable by keyword match, so it takes the default exponential
-        # branch rather than a fixed hint.
+        # Retryable by keyword match (an idempotent call only), so it takes
+        # the default exponential branch rather than a fixed hint.
         fn = _raises_then(
             [Exception(f"connection timeout {i}") for i in range(3)], "ok"
         )
 
-        await async_retry_with_backoff(fn, max_attempts=5, base_delay=1.0)
+        await async_retry_with_backoff(
+            fn, max_attempts=5, base_delay=1.0, idempotent=True
+        )
 
         assert no_sleeping["async"] == [1.0, 2.0, 4.0]
 

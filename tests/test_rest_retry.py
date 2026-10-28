@@ -38,10 +38,13 @@ class TestIsRetryable:
         assert not is_retryable(GenericError("something"))
 
     def test_nonce_error_retryable(self):
-        assert is_retryable(GenericError("nonce too small"))
+        # A message match only counts for a call declared idempotent.
+        assert is_retryable(GenericError("nonce too small"), idempotent=True)
+        assert not is_retryable(GenericError("nonce too small"))
 
     def test_connection_string_retryable(self):
-        assert is_retryable(Exception("connection refused"))
+        assert is_retryable(Exception("connection refused"), idempotent=True)
+        assert not is_retryable(Exception("connection refused"))
 
     def test_unknown_error_not_retryable(self):
         assert not is_retryable(Exception("something else"))
