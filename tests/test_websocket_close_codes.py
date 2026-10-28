@@ -13,7 +13,6 @@ client did about it. `_StopTheLoop` ends an otherwise-infinite retry.
 
 from socket import gaierror
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from websockets.exceptions import ConnectionClosedError, InvalidStatus
@@ -53,12 +52,6 @@ def _drive(monkeypatch, outcomes, *, timeout=None, websocket=None):
     )
     monkeypatch.setattr(mod._Delay, "next", lambda self: 0.0)
     monkeypatch.setattr(mod._Delay, "peek", lambda self: 0.0)
-
-    class _Loop:
-        def call_later(self, delay, callback):
-            return MagicMock()
-
-    monkeypatch.setattr(mod.asyncio, "get_event_loop", lambda: _Loop())
 
     emitted = []
     emitter = client._BfxWebSocketClient__event_emitter
@@ -208,11 +201,21 @@ class TestRetryErrorsDuringRecovery:
         assert caught.value is error
 
     @pytest.mark.asyncio
-    async def test_a_non_408_status_surfaces_even_while_reconnecting(
+    async def test_a_503_while_reconnecting_is_retried(self, monkeypatch):
+        """Bitfinex answers 503 during maintenance: a reason to wait, not quit."""
+        client, _ = _drive(
+            monkeypatch, [_closed(1006), _invalid_status(503), _StopTheLoop()]
+        )
+
+        with pytest.raises(_StopTheLoop):
+            await client.start()
+
+    @pytest.mark.asyncio
+    async def test_a_4xx_status_surfaces_even_while_reconnecting(
         self, monkeypatch
     ):
-        """Only 408 means "try again"; 503 is the server saying stop."""
-        error = _invalid_status(503)
+        """403 is the server refusing us on purpose: retrying never helps."""
+        error = _invalid_status(403)
         client, _ = _drive(monkeypatch, [_closed(1006), error])
 
         with pytest.raises(InvalidStatus) as caught:

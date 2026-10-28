@@ -102,9 +102,13 @@ class TestCloseClassification:
     @pytest.mark.parametrize(
         "error",
         [
-            pytest.param(ConnectionClosedError(None, None), id="no close frame"),
             pytest.param(
-                ConnectionClosedError(None, Close(1011, "keepalive ping timeout")),
+                ConnectionClosedError(None, None), id="no close frame"
+            ),
+            pytest.param(
+                ConnectionClosedError(
+                    None, Close(1011, "keepalive ping timeout")
+                ),
                 id="keepalive timeout",
             ),
         ],
@@ -160,7 +164,9 @@ class TestRetryableFailuresWhileReconnecting:
             pytest.param(_invalid_status(503), id="HTTP 503"),
             pytest.param(_invalid_status(520), id="HTTP 520"),
             pytest.param(ConnectionRefusedError(111, "refused"), id="refused"),
-            pytest.param(TimeoutError("timed out during handshake"), id="timeout"),
+            pytest.param(
+                TimeoutError("timed out during handshake"), id="timeout"
+            ),
             pytest.param(OSError(101, "Network is unreachable"), id="OSError"),
             pytest.param(
                 InvalidMessage("did not receive a valid HTTP response"),
@@ -236,7 +242,9 @@ def _drive_clocked(monkeypatch, steps, *, timeout):
 
 
 class TestOutageDeadline:
-    async def test_an_earlier_outage_does_not_cut_a_later_one(self, monkeypatch):
+    async def test_an_earlier_outage_does_not_cut_a_later_one(
+        self, monkeypatch
+    ):
         """Outage A at t=0 recovers; outage B starts at t=7.5 (timeout 8).
 
         A fire-and-forget timer from A used to end B at t=8, half a second in.
@@ -269,7 +277,9 @@ class TestOutageDeadline:
         with pytest.raises(ReconnectionTimeoutError, match="timeout: 8s"):
             await client.start()
 
-    async def test_the_backoff_never_sleeps_past_the_deadline(self, monkeypatch):
+    async def test_the_backoff_never_sleeps_past_the_deadline(
+        self, monkeypatch
+    ):
         """A 60 s backoff against a 50 ms deadline ends at the deadline."""
         monkeypatch.setattr(_Delay, "next", lambda self: 60.0)
         client = BfxWebSocketClient("wss://example.invalid", timeout=0.05)  # type: ignore[arg-type]
@@ -324,7 +334,7 @@ class TestBucketSupervision:
         sockets = connect_each()
         client._websocket = FakeWebSocket()
         await client.subscribe("ticker", sub_id="t1", symbol="tBTCUSD")
-        await settle(lambda: ("subscribed" in [e for e, *_ in captured]))
+        await settle(lambda: "subscribed" in [e for e, *_ in captured])
         return sockets
 
     async def test_a_dropped_bucket_reconnects_and_resubscribes(
@@ -339,9 +349,7 @@ class TestBucketSupervision:
         assert _subscribes(sockets[1]) == ["t1"]
         # The fresh confirmation must reach the consumer: the per-subscription
         # ledger would otherwise swallow it as a duplicate.
-        await settle(
-            lambda: [e for e, *_ in captured].count("subscribed") == 2
-        )
+        await settle(lambda: [e for e, *_ in captured].count("subscribed") == 2)
         assert [e for e, *_ in captured if e == "error"] == []
         await client.close()
 
@@ -408,6 +416,26 @@ class TestBucketSupervision:
 
         assert len(sockets) == 1
 
+    async def test_a_client_reconnect_restarts_its_buckets_once(
+        self, connect_each, no_backoff
+    ):
+        """The old bucket task is stopped, so no bucket runs twice."""
+        sockets = connect_each()
+        client, captured = _client_with_events()
+        running = asyncio.create_task(client.start())
+        await settle(lambda: client.open)
+        await client.subscribe("ticker", sub_id="t1", symbol="tBTCUSD")
+        await settle(lambda: "subscribed" in [e for e, *_ in captured])
+
+        sockets[0].fail(ConnectionClosedError(None, None))
+
+        await settle(lambda: len(sockets) == 4 and _subscribes(sockets[3]))
+        assert _subscribes(sockets[3]) == ["t1"]
+        await asyncio.sleep(0.02)
+        assert len(sockets) == 4
+        await client.close()
+        await asyncio.wait_for(running, 2)
+
 
 class TestMaintenanceCodes:
     async def test_maintenance_start_and_end_are_announced(self, connect_each):
@@ -426,7 +454,9 @@ class TestMaintenanceCodes:
         ]
 
     @pytest.mark.parametrize("code", [20051, 20061])
-    async def test_a_bucket_resubscribes_on(self, connect_each, no_backoff, code):
+    async def test_a_bucket_resubscribes_on(
+        self, connect_each, no_backoff, code
+    ):
         """20051 is a restart; after 20061 the docs say resubscribe everything."""
         client, captured = _client_with_events()
         sockets = await TestBucketSupervision()._subscribed(

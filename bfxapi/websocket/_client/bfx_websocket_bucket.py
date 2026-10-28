@@ -18,7 +18,7 @@ _CHECKSUM_FLAG_VALUE = 131_072
 
 _SERVICE_RESTART = 1012
 
-_RESTART_CODES = {
+_RESTART_CODES: dict[int | None, str] = {
     20051: "Stop/Restart WebSocket Server (please reconnect).",
     20061: "Maintenance ended (please resubscribe all channels).",
 }

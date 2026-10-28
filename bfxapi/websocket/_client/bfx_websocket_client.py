@@ -1,18 +1,24 @@
 import asyncio
+import contextlib
 import json
 import random
+import time
 import traceback
 from asyncio import Task
 from collections.abc import Callable
 from datetime import datetime
 from logging import Logger
-from socket import gaierror
 from typing import Any, TypedDict
 
 import websockets.asyncio.client
 import websockets.frames
 from pyee import Handler
-from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.exceptions import (
+    ConnectionClosed,
+    ConnectionClosedError,
+    InvalidMessage,
+    InvalidStatus,
+)
 
 from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_encoder import JSONEncoder
@@ -42,9 +48,36 @@ class _Reconnection(TypedDict):
     attempts: int
     reason: str
     timestamp: datetime
+    # `_clock()` reading after which this outage gives up; `None` retries
+    # forever. Each outage owns its deadline, so a recovered outage can never
+    # cut a later one short.
+    deadline: float | None
 
 
 _DEFAULT_LOGGER = Logger("bfxapi.websocket._client", level=0)
+
+# Seam for the outage deadline: monotonic, so a wall-clock jump neither ends
+# an outage early nor extends it.
+_clock = time.monotonic
+
+# Close codes that mean "the connection is gone, come back": 1006 (abnormal
+# closure) and 1012 (service restart, which Bitfinex announces with 20051).
+_LOST_CONNECTION_CODES = (1006, 1012)
+
+_GOING_AWAY = 1001
+
+# HTTP statuses a reconnecting client waits out: a request timeout, rate
+# limiting, and the 5xx family Bitfinex answers with during maintenance.
+_RETRYABLE_STATUSES = frozenset({408, 429})
+
+# What a bucket socket dies of when the network, not the code, failed.
+_EXPECTED_DROPS = (ConnectionClosed, OSError, InvalidMessage, InvalidStatus)
+
+
+def _is_retryable_status(error: InvalidStatus) -> bool:
+    status = error.response.status_code
+
+    return status in _RETRYABLE_STATUSES or 500 <= status <= 599
 
 
 class _Delay:
@@ -101,6 +134,10 @@ class BfxWebSocketClient(Connection):
 
         self.__reconnection: _Reconnection | None = None
 
+        # Set by close(): a close the owner asked for is never mistaken for a
+        # lost connection, even when its handshake times out without a frame.
+        self.__closing = False
+
         self.__event_emitter = BfxEventEmitter(loop=None)
 
         self.__handler = AuthEventsHandler(event_emitter=self.__event_emitter)
@@ -129,100 +166,48 @@ class BfxWebSocketClient(Connection):
     async def start(self) -> None:
         _delay = _Delay(backoff_factor=1.618)
 
-        _sleep: Task[None] | None = None
-
-        def _on_timeout() -> None:
-            if not self.open:
-                if _sleep:
-                    _sleep.cancel()
+        self.__closing = False
 
         while True:
             if self.__reconnection:
-                _sleep = asyncio.create_task(asyncio.sleep(int(_delay.next())))
+                _sleep = float(int(_delay.next()))
 
-                try:
-                    await _sleep
-                except asyncio.CancelledError:
-                    raise ReconnectionTimeoutError(
-                        "Connection has been offline for too long "
-                        f"without being able to reconnect (timeout: {self.__timeout}s)."
-                    ) from None
+                # Never sleep past the deadline, and never attempt after it.
+                if (left := self.__time_left()) is not None:
+                    _sleep = min(_sleep, left)
+
+                await asyncio.sleep(_sleep)
+
+                self.__time_left()
 
             try:
                 await self.__connect()
             except (
                 ConnectionClosedError,
                 InvalidStatus,
-                gaierror,
+                InvalidMessage,
+                OSError,
             ) as error:
+                await self.__stop_buckets()
 
-                async def _cancel(task: Task[None]) -> None:
-                    task.cancel()
-
-                    try:
-                        await task
-                    except (
-                        ConnectionClosedError,
-                        InvalidStatus,
-                        gaierror,
-                    ) as _e:
-                        nonlocal error
-
-                        if type(error) is not type(_e) or error.args != _e.args:
-                            raise _e
-                    except asyncio.CancelledError:
-                        pass
-
-                for bucket in self.__buckets:
-                    if task := self.__buckets[bucket]:
-                        self.__buckets[bucket] = None
-
-                        await _cancel(task)
-
-                if (
-                    isinstance(error, ConnectionClosedError)
-                    and error.rcvd
-                    and error.rcvd.code
-                    in (
-                        1006,
-                        1012,
-                    )
-                ):
-                    if error.rcvd.code == 1006:
-                        self.__logger.error(
-                            "Connection lost: trying to reconnect..."
-                        )
-
-                    if error.rcvd.code == 1012:
+                if isinstance(
+                    error, ConnectionClosedError
+                ) and self.__is_lost_connection(error):
+                    if error.rcvd and error.rcvd.code == 1012:
                         self.__logger.warning(
                             "WSS server is restarting: all "
                             "clients need to reconnect (server sent 20051)."
                         )
-
-                    # `None` is the documented way to retry forever; a falsy
-                    # check also swallowed `timeout=0`, turning "give up at
-                    # once" into "never give up".
-                    if self.__timeout is not None:
-                        asyncio.get_event_loop().call_later(
-                            self.__timeout, _on_timeout
+                    else:
+                        self.__logger.error(
+                            "Connection lost: trying to reconnect..."
                         )
 
-                    self.__reconnection = {
-                        "attempts": 1,
-                        "reason": error.rcvd.reason,
-                        "timestamp": datetime.now(),
-                    }
-
-                    self._authentication = False
-
-                    _delay.reset()
-                elif (
-                    (
-                        isinstance(error, InvalidStatus)
-                        and error.response.status_code == 408
+                    self.__begin_outage(
+                        error.rcvd.reason if error.rcvd else "connection lost",
+                        _delay,
                     )
-                    or isinstance(error, gaierror)
-                ) and self.__reconnection:
+                elif self.__reconnection and self.__is_retryable(error):
                     self.__logger.warning(
                         "Reconnection attempt unsuccessful (no."
                         f"{self.__reconnection['attempts']}): next attempt in "
@@ -238,21 +223,139 @@ class BfxWebSocketClient(Connection):
                 else:
                     raise error
 
-            if not self.__reconnection:
-                close_code = None
-                close_reason = ""
-                if self._websocket.close_code is not None:
-                    close_code = self._websocket.close_code
-                if self._websocket.close_reason is not None:
-                    close_reason = self._websocket.close_reason
+                continue
 
-                self.__event_emitter.emit(
-                    "disconnected",
-                    close_code,
-                    close_reason,
+            if not self.__closing and self._websocket.close_code == _GOING_AWAY:
+                # The server is going away (an edge restart or a deploy) and
+                # the client did not ask for it: come back, don't hang up.
+                await self.__stop_buckets()
+
+                self.__logger.warning(
+                    "WSS server is going away: trying to reconnect..."
                 )
 
-                break
+                self.__begin_outage(
+                    self._websocket.close_reason or "going away", _delay
+                )
+
+                continue
+
+            close_code = None
+            close_reason = ""
+            if self._websocket.close_code is not None:
+                close_code = self._websocket.close_code
+            if self._websocket.close_reason is not None:
+                close_reason = self._websocket.close_reason
+
+            self.__event_emitter.emit(
+                "disconnected",
+                close_code,
+                close_reason,
+            )
+
+            break
+
+    def __is_lost_connection(self, error: ConnectionClosedError) -> bool:
+        # websockets 16 reports a dead TCP connection (and a keepalive
+        # timeout) with no received close frame at all: RFC 6455 forbids
+        # sending 1006, so `rcvd is None` IS the lost connection. A close the
+        # client asked for can end the same way, hence `__closing`.
+        if self.__closing:
+            return False
+
+        return error.rcvd is None or error.rcvd.code in _LOST_CONNECTION_CODES
+
+    @staticmethod
+    def __is_retryable(error: Exception) -> bool:
+        if isinstance(error, InvalidStatus):
+            return _is_retryable_status(error)
+
+        return isinstance(error, (OSError, InvalidMessage))
+
+    def __begin_outage(self, reason: str, delay: _Delay) -> None:
+        # A lost connection can only follow a connection that came up (which
+        # cleared the previous outage), so every one starts a fresh outage
+        # with its own deadline.
+        #
+        # `None` is the documented way to retry forever; a falsy check also
+        # swallowed `timeout=0`, turning "give up at once" into "never give
+        # up".
+        deadline = None if self.__timeout is None else _clock() + self.__timeout
+
+        self.__reconnection = {
+            "attempts": 1,
+            "reason": reason,
+            "timestamp": datetime.now(),
+            "deadline": deadline,
+        }
+
+        self._authentication = False
+
+        delay.reset()
+
+    def __time_left(self) -> float | None:
+        """Seconds left in the current outage, or raise once it is over."""
+        assert self.__reconnection is not None
+
+        if (deadline := self.__reconnection["deadline"]) is None:
+            return None
+
+        if (left := deadline - _clock()) <= 0:
+            raise ReconnectionTimeoutError(
+                "Connection has been offline for too long "
+                f"without being able to reconnect (timeout: {self.__timeout}s)."
+            )
+
+        return left
+
+    async def __stop_buckets(self) -> None:
+        async def _cancel(task: Task[None]) -> None:
+            task.cancel()
+
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        for bucket in self.__buckets:
+            if task := self.__buckets[bucket]:
+                self.__buckets[bucket] = None
+
+                await _cancel(task)
+
+    async def __supervise(self, bucket: BfxWebSocketBucket) -> None:
+        """Run one bucket socket and bring it back whenever it drops.
+
+        A bucket is its own TCP connection: it can die while the client's
+        socket stays up, and nothing used to notice.
+        """
+        _delay = _Delay(backoff_factor=1.618)
+
+        connections = bucket._connections
+
+        while True:
+            try:
+                await bucket.start()
+            except _EXPECTED_DROPS as error:
+                self.__logger.warning(
+                    f"Bucket connection dropped ({type(error).__name__}: "
+                    f"{error}): reconnecting..."
+                )
+            except Exception as error:
+                self.__event_emitter.emit("error", error)
+
+            # Removed by unsubscribe, closed on purpose, or the client is
+            # down itself: its own reconnect restarts every bucket.
+            if bucket not in self.__buckets or bucket._closing or not self.open:
+                return
+
+            # A fresh socket must re-announce every subscription it confirms.
+            self.__event_emitter.reset_subscription_scope(bucket.ids)
+
+            if bucket._connections > connections:
+                connections = bucket._connections
+
+                _delay.reset()
+
+            await asyncio.sleep(_delay.next())
 
     async def __connect(self) -> None:
         async with websockets.asyncio.client.connect(self._host) as websocket:
@@ -274,7 +377,9 @@ class BfxWebSocketClient(Connection):
             self._websocket = websocket
 
             for bucket in self.__buckets:
-                self.__buckets[bucket] = asyncio.create_task(bucket.start())
+                self.__buckets[bucket] = asyncio.create_task(
+                    self.__supervise(bucket)
+                )
 
             if len(self.__buckets) == 0 or (
                 await asyncio.gather(
@@ -303,7 +408,8 @@ class BfxWebSocketClient(Connection):
                                 f"version: {message['version']})."
                             )
                     elif (
-                        message["event"] == "info" and message["code"] == 20051
+                        message["event"] == "info"
+                        and message.get("code") == 20051
                     ):
                         rcvd = websockets.frames.Close(
                             1012,
@@ -311,6 +417,16 @@ class BfxWebSocketClient(Connection):
                         )
 
                         raise ConnectionClosedError(rcvd=rcvd, sent=None)
+                    elif (
+                        message["event"] == "info"
+                        and message.get("code") == 20060
+                    ):
+                        self.__event_emitter.emit("maintenance_start", message)
+                    elif (
+                        message["event"] == "info"
+                        and message.get("code") == 20061
+                    ):
+                        self.__event_emitter.emit("maintenance_end", message)
                     elif message["event"] == "auth":
                         if message["status"] != "OK":
                             raise InvalidCredentialError(
@@ -335,7 +451,7 @@ class BfxWebSocketClient(Connection):
             lossless_financial_decode=self.__lossless_financial_decode,
         )
 
-        self.__buckets[bucket] = asyncio.create_task(bucket.start())
+        self.__buckets[bucket] = asyncio.create_task(self.__supervise(bucket))
 
         await bucket.wait()
 
@@ -389,6 +505,8 @@ class BfxWebSocketClient(Connection):
 
     @Connection._require_websocket_connection
     async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.__closing = True
+
         for bucket in self.__buckets:
             await bucket.close(code=code, reason=reason)
 
