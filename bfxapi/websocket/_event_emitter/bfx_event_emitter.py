@@ -32,6 +32,12 @@ _ONCE_PER_SUBSCRIPTION = [
 
 _COMMON = [
     "disconnected",
+    # A failure the client recovered from but the consumer must hear about,
+    # e.g. a subscription bucket that died and is being restarted.
+    "error",
+    # Bitfinex info 20060 / 20061: pause activity until maintenance ends.
+    "maintenance_start",
+    "maintenance_end",
     "t_ticker_update",
     "f_ticker_update",
     "t_trade_execution",
@@ -109,6 +115,16 @@ class BfxEventEmitter(AsyncIOEventEmitter):
         self._connection = []
 
         self._subscriptions = defaultdict(lambda: [])
+
+    def reset_subscription_scope(self, sub_ids: list[str]) -> None:
+        """Re-arm the once-per-subscription events of `sub_ids` only.
+
+        A bucket socket reconnects on its own while the client's socket stays
+        up, so the server re-confirms and re-snapshots just that bucket's
+        subscriptions; the rest of the ledger must stay untouched.
+        """
+        for sub_id in sub_ids:
+            self._subscriptions.pop(sub_id, None)
 
     def emit(self, event: str, *args: Any, **kwargs: Any) -> bool:
         if event in _ONCE_PER_CONNECTION:

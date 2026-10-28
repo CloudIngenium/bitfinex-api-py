@@ -244,6 +244,15 @@ class FakeWebSocket:
         """
         self._outbox.put_nowait(frame)
 
+    def fail(self, error: BaseException) -> None:
+        """Drop the socket mid-stream, the way a real connection dies.
+
+        `raises` can only fail a socket before it serves anything; a bucket
+        that dies AFTER its subscriptions were confirmed is the case that used
+        to go unnoticed.
+        """
+        self._outbox.put_nowait(error)
+
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = (code, reason)
         self.close_code, self.close_reason = code, reason
@@ -266,6 +275,9 @@ class FakeWebSocket:
             frame = await self._outbox.get()
             if frame is _STOP:
                 return
+            if isinstance(frame, BaseException):
+                self.state = SimpleNamespace(name="CLOSED")
+                raise frame
             yield frame
 
     @property
