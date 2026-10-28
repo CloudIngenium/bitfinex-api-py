@@ -351,6 +351,9 @@ class Ledger(_Type):
     amount: float
     balance: float
     description: str
+    # Index 2 on the wire: exchange, margin, funding or contribution. Last
+    # here, with a default, so positional construction keeps working.
+    wallet: str | None = None
 
 
 @dataclass

@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 from bfxapi._utils.logging import ColorLogger
 from bfxapi.exceptions import IncompleteCredentialError
 from bfxapi.rest import BfxRestInterface
-from bfxapi.types.labeler import set_decimal_mode
 from bfxapi.websocket import BfxWebSocketClient
 
 if TYPE_CHECKING:
@@ -29,7 +28,16 @@ class Client:
         log_filename: str | None = None,
         decimal_mode: bool = False,
         lossless_financial_decode: bool = False,
+        dms: int | None = None,
     ) -> None:
+        """
+        Args:
+            decimal_mode: Parse monetary fields as Decimal. Applies to this
+                client only; other Client instances keep their own mode.
+            dms: Dead-man switch flag for the authenticated WebSocket
+                (Bitfinex accepts 4: cancel all orders when the socket
+                closes). Sent on every (re)authentication.
+        """
         if lossless_financial_decode and decimal_mode:
             # Two decoders for the same numbers: the lossless one would win
             # and `decimal_mode` would be dropped without a word.
@@ -38,8 +46,10 @@ class Client:
                 "exclusive; lossless_financial_decode already yields Decimal."
             )
 
-        if not lossless_financial_decode:
-            set_decimal_mode(decimal_mode)
+        # Per client, never process-wide: a lossless client already yields
+        # Decimal from the decoder, so it opts out of the legacy conversion.
+        scoped_decimal_mode = decimal_mode and not lossless_financial_decode
+
         credentials: _Credentials | None = None
 
         if api_key and api_secret:
@@ -48,6 +58,8 @@ class Client:
                 "api_secret": api_secret,
                 "filters": filters,
             }
+            if dms is not None:
+                credentials["dms"] = dms
         elif api_key:
             raise IncompleteCredentialError(
                 "You must provide both API-KEY and API-SECRET (missing API-KEY)."
@@ -62,6 +74,7 @@ class Client:
             api_key,
             api_secret,
             lossless_financial_decode=lossless_financial_decode,
+            decimal_mode=scoped_decimal_mode,
         )
 
         logger = ColorLogger("bfxapi", level="INFO")
@@ -75,4 +88,5 @@ class Client:
             timeout=timeout,
             logger=logger,
             lossless_financial_decode=lossless_financial_decode,
+            decimal_mode=scoped_decimal_mode,
         )

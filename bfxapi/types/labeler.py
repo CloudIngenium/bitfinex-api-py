@@ -1,4 +1,6 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 from typing import Any, Generic, TypeVar, cast
 
@@ -90,14 +92,48 @@ MONETARY_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# Module-level flag — set by Client when decimal_mode=True
+# Process-wide fallback, used only when a serializer runs outside any client
+# scope (direct serializer use, a bare RestPublicEndpoints). A Client never
+# writes it: each one scopes its own mode through `decimal_mode_scope`, so a
+# second Client() can no longer flip the first one's decoding.
 _decimal_mode: bool = False
+
+_scoped_decimal_mode: ContextVar[bool | None] = ContextVar(
+    "bfxapi_decimal_mode", default=None
+)
 
 
 def set_decimal_mode(enabled: bool) -> None:
-    """Enable or disable Decimal conversion for monetary fields."""
+    """Set the process-wide default for parsing outside a client scope.
+
+    A ``Client(decimal_mode=...)`` does not read or change this default:
+    its REST and WebSocket parsing always runs under its own mode.
+    """
     global _decimal_mode
     _decimal_mode = enabled
+
+
+@contextmanager
+def decimal_mode_scope(enabled: bool | None) -> Iterator[None]:
+    """Run the block with Decimal conversion on or off for this context only.
+
+    Context-local (contextvars), so threads and asyncio tasks of different
+    clients never see each other's mode. ``None`` leaves the mode in force.
+    """
+    if enabled is None:
+        yield
+        return
+    token = _scoped_decimal_mode.set(enabled)
+    try:
+        yield
+    finally:
+        _scoped_decimal_mode.reset(token)
+
+
+def decimal_mode_enabled() -> bool:
+    """The mode in force here: the innermost scope, else the default."""
+    scoped = _scoped_decimal_mode.get()
+    return _decimal_mode if scoped is None else scoped
 
 
 def compose(
@@ -172,11 +208,13 @@ class _Serializer(Generic[T]):
                 "arguments should contain the same amount of elements."
             )
 
+        decimal = decimal_mode_enabled()
+
         for index, label in enumerate(self.__labels):
             if label != "_PLACEHOLDER":
                 value = args[index] if index < len(args) else None
                 if (
-                    _decimal_mode
+                    decimal
                     and label in MONETARY_FIELDS
                     and isinstance(value, (int, float))
                 ):

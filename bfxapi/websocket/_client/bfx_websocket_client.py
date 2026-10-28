@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from logging import Logger
 from socket import gaierror
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 import websockets.asyncio.client
 import websockets.frames
@@ -36,6 +36,7 @@ class _Credentials(TypedDict):
     api_key: str
     api_secret: str
     filters: list[str] | None
+    dms: NotRequired[int]
 
 
 class _Reconnection(TypedDict):
@@ -84,9 +85,11 @@ class BfxWebSocketClient(Connection):
         timeout: int | None = 60 * 15,
         logger: Logger = _DEFAULT_LOGGER,
         lossless_financial_decode: bool = False,
+        decimal_mode: bool | None = None,
     ) -> None:
         super().__init__(host)
         self.__lossless_financial_decode = lossless_financial_decode
+        self.__decimal_mode = decimal_mode
         self.__decode_options = financial_decode_options(
             lossless_financial_decode
         )
@@ -103,7 +106,9 @@ class BfxWebSocketClient(Connection):
 
         self.__event_emitter = BfxEventEmitter(loop=None)
 
-        self.__handler = AuthEventsHandler(event_emitter=self.__event_emitter)
+        self.__handler = AuthEventsHandler(
+            event_emitter=self.__event_emitter, decimal_mode=decimal_mode
+        )
 
         self.__inputs = BfxWebSocketInputs(
             handle_websocket_input=self.__handle_websocket_input
@@ -333,6 +338,7 @@ class BfxWebSocketClient(Connection):
             self._host,
             self.__event_emitter,
             lossless_financial_decode=self.__lossless_financial_decode,
+            decimal_mode=self.__decimal_mode,
         )
 
         self.__buckets[bucket] = asyncio.create_task(bucket.start())
