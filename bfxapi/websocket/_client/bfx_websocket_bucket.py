@@ -5,6 +5,8 @@ from typing import Any, cast
 
 import websockets.asyncio.client
 from pyee import EventEmitter
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_decoder import JSONDecoder
@@ -14,6 +16,13 @@ from bfxapi.websocket.subscriptions import Subscription
 
 _CHECKSUM_FLAG_VALUE = 131_072
 
+_SERVICE_RESTART = 1012
+
+_RESTART_CODES: dict[int | None, str] = {
+    20051: "Stop/Restart WebSocket Server (please reconnect).",
+    20061: "Maintenance ended (please resubscribe all channels).",
+}
+
 
 def _strip(message: dict[str, Any], keys: list[str]) -> dict[str, Any]:
     return {key: value for key, value in message.items() if key not in keys}
@@ -21,6 +30,14 @@ def _strip(message: dict[str, Any], keys: list[str]) -> dict[str, Any]:
 
 class BfxWebSocketBucket(Connection):
     __MAXIMUM_SUBSCRIPTIONS_AMOUNT = 25
+
+    # Read by the client's bucket supervisor. `_closing` tells a close the
+    # client asked for from one the server forced; `_connections` grows on
+    # every socket that opened, so a restart that got through resets the
+    # supervisor's backoff.
+    _closing: bool = False
+
+    _connections: int = 0
 
     def __init__(
         self,
@@ -62,8 +79,12 @@ class BfxWebSocketBucket(Connection):
         ]
 
     async def start(self) -> None:
+        self._closing = False
+
         async with websockets.asyncio.client.connect(self._host) as websocket:
             self._websocket = websocket
+
+            self._connections += 1
 
             await self.__recover_state()
 
@@ -78,6 +99,17 @@ class BfxWebSocketBucket(Connection):
                 if isinstance(message, dict):
                     if message["event"] == "subscribed":
                         await self.__on_subscribed(message)
+                    elif message["event"] == "info" and (
+                        reason := _RESTART_CODES.get(message.get("code"))
+                    ):
+                        # 20051 (server restart) and 20061 (maintenance end,
+                        # after which Bitfinex advises resubscribing every
+                        # channel): end this socket as a restart, so the
+                        # client reconnects it and __recover_state
+                        # resubscribes everything on a fresh connection.
+                        raise ConnectionClosedError(
+                            rcvd=Close(_SERVICE_RESTART, reason), sent=None
+                        )
 
                 if isinstance(message, list):
                     if (
@@ -190,6 +222,8 @@ class BfxWebSocketBucket(Connection):
 
     @Connection._require_websocket_connection
     async def close(self, code: int = 1000, reason: str = "") -> None:
+        self._closing = True
+
         await self._websocket.close(code, reason)
 
     def has(self, sub_id: str) -> bool:

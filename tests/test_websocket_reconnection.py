@@ -296,12 +296,12 @@ class _StopTheLoop(Exception):
 
 
 async def _drive_reconnection(monkeypatch, timeout):
-    """Run start() far enough to hit the reconnect branch, and report call_later.
+    """Run start() far enough to hit the reconnect branch; return the client.
 
     __connect raises a 1006 close on the first attempt — the branch that arms the
-    reconnection timeout — and a sentinel on the second, so the loop exits instead
-    of retrying forever. The backoff is flattened so the test does not actually
-    sleep through it.
+    outage deadline — and a sentinel on the second, so the loop exits instead
+    of retrying forever. The backoff is flattened and the clock frozen at 100 s,
+    so the deadline is exact and the test does not actually sleep.
     """
     from websockets.exceptions import ConnectionClosedError
     from websockets.frames import Close
@@ -322,20 +322,9 @@ async def _drive_reconnection(monkeypatch, timeout):
         client, "_BfxWebSocketClient__connect", _connect, raising=False
     )
     monkeypatch.setattr(mod._Delay, "next", lambda self: 0.0)
+    monkeypatch.setattr(mod, "_clock", lambda: 100.0)
 
-    scheduled = []
-
-    class _Loop:
-        def call_later(self, delay, callback):
-            scheduled.append(delay)
-            return MagicMock()
-
-    monkeypatch.setattr(mod.asyncio, "get_event_loop", lambda: _Loop())
-
-    with pytest.raises(_StopTheLoop):
-        await client.start()
-
-    return scheduled
+    return client
 
 
 class TestReconnectionTimeoutIsArmed:
@@ -348,22 +337,32 @@ class TestReconnectionTimeoutIsArmed:
 
     @pytest.mark.asyncio
     async def test_zero_timeout_is_armed(self, monkeypatch):
-        scheduled = await _drive_reconnection(monkeypatch, timeout=0)
+        from bfxapi.websocket.exceptions import ReconnectionTimeoutError
 
-        assert scheduled == [0], (
-            "timeout=0 never armed the deadline: the client reconnects forever"
-        )
+        client = await _drive_reconnection(monkeypatch, timeout=0)
+
+        # The deadline is "now": the client gives up before a second attempt.
+        with pytest.raises(ReconnectionTimeoutError, match="timeout: 0s"):
+            await client.start()
+
+        assert client._BfxWebSocketClient__reconnection["deadline"] == 100.0
 
     @pytest.mark.asyncio
     async def test_positive_timeout_is_armed(self, monkeypatch):
-        scheduled = await _drive_reconnection(monkeypatch, timeout=30)
+        client = await _drive_reconnection(monkeypatch, timeout=30)
 
-        assert scheduled == [30]
+        with pytest.raises(_StopTheLoop):
+            await client.start()
+
+        assert client._BfxWebSocketClient__reconnection["deadline"] == 130.0
 
     @pytest.mark.asyncio
     async def test_none_timeout_retries_forever(self, monkeypatch):
         # The documented opt-out, and the reason the check cannot simply be
         # truthiness-free: None must NOT arm a deadline.
-        scheduled = await _drive_reconnection(monkeypatch, timeout=None)
+        client = await _drive_reconnection(monkeypatch, timeout=None)
 
-        assert scheduled == []
+        with pytest.raises(_StopTheLoop):
+            await client.start()
+
+        assert client._BfxWebSocketClient__reconnection["deadline"] is None
