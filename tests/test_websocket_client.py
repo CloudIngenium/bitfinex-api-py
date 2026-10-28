@@ -8,7 +8,10 @@ import pytest
 import websockets.frames
 from websockets.exceptions import ConnectionClosedError
 
-from bfxapi._utils.financial_json import FinancialTokenDecimal
+from bfxapi._utils.financial_json import (
+    FinancialDecodeError,
+    FinancialTokenDecimal,
+)
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.websocket._client.bfx_websocket_client import (
     BfxWebSocketClient,
@@ -448,6 +451,41 @@ class TestMessageLoop:
         aum = [e for e in captured if e[0] == "balance_update"][0][1].aum
         assert isinstance(aum, FinancialTokenDecimal)
         assert aum.source_token == "1.00000000000000000001"
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_lossless_decode_reaches_every_bucket(
+        self, connect_each, enabled
+    ):
+        """Public channels live on buckets the client builds itself.
+
+        Dropping the flag in `__new_bucket` would leave every ticker, book
+        and trade of an opted-in client decoded as a float, and the
+        bucket-level tests build their bucket directly, so only this test
+        sees that hand-off.
+        """
+        connect_each()
+        client, captured = make_client(lossless_financial_decode=enabled)
+        async with opened(client):
+            await subscribe_confirmed(client, captured, "abc", symbol="tBTCUSD")
+            buckets = list(client._BfxWebSocketClient__buckets)
+
+        assert len(buckets) == 1
+        options = buckets[0]._BfxWebSocketBucket__decode_options
+        assert (options.get("parse_float") is FinancialTokenDecimal) is enabled
+
+    async def test_non_finite_number_on_the_auth_channel_is_an_sdk_error(
+        self, connect_each
+    ):
+        """A NaN amount is refused loudly, and as a library exception.
+
+        A bare ValueError would slip past every `except BfxBaseException`
+        a consumer wrote for "anything the SDK raises".
+        """
+        connect_each(lambda: FakeWebSocket(incoming=['[0, "bu", [NaN, 2.5]]']))
+        client, _ = make_client(lossless_financial_decode=True)
+
+        with pytest.raises(FinancialDecodeError, match="NaN"):
+            await client.start()
 
 
 class TestReconnection:

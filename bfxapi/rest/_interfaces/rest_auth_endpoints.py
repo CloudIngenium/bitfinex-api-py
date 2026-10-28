@@ -2,6 +2,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from bfxapi.rest._interface import Interface
+from bfxapi.rest.exceptions import GenericError
 from bfxapi.types import (
     BalanceAvailable,
     BaseMarginInfo,
@@ -44,7 +45,9 @@ class RestAuthEndpoints(Interface):
         """Authenticated identity proof without legacy model field remapping."""
         data = self._m.post("auth/r/info/user")
         if not isinstance(data, list):
-            raise ValueError("Unexpected User Info response")
+            raise GenericError(
+                f"Unexpected User Info response: {type(data).__name__}"
+            )
         return data
 
     def get_user_info(self) -> UserInfo:

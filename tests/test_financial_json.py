@@ -8,9 +8,11 @@ from pyee import EventEmitter
 
 from bfxapi import Client
 from bfxapi._utils.financial_json import (
+    FinancialDecodeError,
     FinancialTokenDecimal,
     financial_decode_options,
 )
+from bfxapi.exceptions import BfxBaseException
 from bfxapi.types import serializers
 from bfxapi.types.labeler import set_decimal_mode
 from bfxapi.websocket._handlers.auth_events_handler import AuthEventsHandler
@@ -88,8 +90,48 @@ def test_lossless_constructor_does_not_modify_global_legacy_decimal_mode():
 
 @pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
 def test_non_finite_input_rejected(token):
-    with pytest.raises(ValueError, match="Non-finite"):
+    with pytest.raises(FinancialDecodeError, match="Non-finite"):
         json.loads(f"[{token}]", **financial_decode_options(True))
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity"])
+def test_non_finite_rest_response_is_an_sdk_error(token):
+    """Through the real middleware, not just the options dict.
+
+    `requests` re-wraps only JSONDecodeError, so without a BfxBaseException
+    subclass the refusal would escape every SDK-error handler.
+    """
+    client = Client("k", "s", lossless_financial_decode=True)
+    with patch(
+        "requests.post",
+        return_value=response(f'[["funding","USD",{token},0,1,null,null]]'),
+    ):
+        with pytest.raises(BfxBaseException, match="Non-finite"):
+            client.rest.auth.get_wallets()
+
+
+def test_both_decimal_flags_are_refused():
+    """Two decoders for one number: one of them would be dropped silently."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Client(decimal_mode=True, lossless_financial_decode=True)
+
+
+def test_reduce_rebuilds_from_the_original_token():
+    """Decimal reduces through str(), which would normalise "1e-8"; the
+    reduce tuple is what pickle and multiprocessing rebuild from."""
+    value = FinancialTokenDecimal("1e-8")
+    factory, args = value.__reduce__()
+    restored = factory(*args)
+    assert isinstance(restored, FinancialTokenDecimal)
+    assert restored.source_token == "1e-8"
+    assert restored == value
+
+
+def test_raw_identity_rejects_a_non_array_response():
+    client = Client("test-key", "test-secret", lossless_financial_decode=True)
+    with patch("requests.post", return_value=response('{"id": 1}')):
+        with pytest.raises(BfxBaseException, match="dict"):
+            client.rest.auth.get_user_info_raw()
 
 
 def test_raw_identity_preserves_official_indices():

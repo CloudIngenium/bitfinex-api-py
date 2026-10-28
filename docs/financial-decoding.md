@@ -3,12 +3,17 @@
 `Client(lossless_financial_decode=True)` opts that client's REST and WebSocket
 transports into parsing JSON fractional/scientific numeric tokens directly into
 `FinancialTokenDecimal`, a `Decimal` subclass. Its `source_token` preserves the
-original token, including trailing zeros and exponent notation. Python integer
-IDs remain exact `int` values. Non-finite numeric constants are rejected.
+original token, including trailing zeros and exponent notation. Integer tokens
+(IDs, and also amounts the exchange sends without a fraction, such as `0` or
+`5`) remain exact `int` values, so financial fields hold `int | Decimal`.
+Non-finite numeric constants (NaN, Infinity) are rejected with
+`FinancialDecodeError`, a `BfxBaseException`.
 
-This does not set the legacy global `decimal_mode`. Other client instances keep
-their configured decoding. SDK models and event names are unchanged; financial
-fields in the opted-in client contain Decimal values. Arithmetic returns normal
+This does not set the legacy global `decimal_mode`, and combining the two flags
+on one client raises `ValueError`. SDK models and event names are unchanged.
+Caveat while `decimal_mode` is still a process-wide setting: if any other client
+in the process enables it, the labeler turns this client's integer-token money
+fields into plain `Decimal` values without `source_token`. Arithmetic returns normal
 Decimal values and does not retain a false claim that its result is an original
 exchange token. Accounting callers must use operation-specific local contexts,
 then serialize canonical decimal strings and explicit source precision.

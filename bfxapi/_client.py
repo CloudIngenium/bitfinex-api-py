@@ -30,6 +30,14 @@ class Client:
         decimal_mode: bool = False,
         lossless_financial_decode: bool = False,
     ) -> None:
+        if lossless_financial_decode and decimal_mode:
+            # Two decoders for the same numbers: the lossless one would win
+            # and `decimal_mode` would be dropped without a word.
+            raise ValueError(
+                "decimal_mode and lossless_financial_decode are mutually "
+                "exclusive; lossless_financial_decode already yields Decimal."
+            )
+
         if not lossless_financial_decode:
             set_decimal_mode(decimal_mode)
         credentials: _Credentials | None = None
