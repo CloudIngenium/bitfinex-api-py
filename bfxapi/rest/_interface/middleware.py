@@ -92,6 +92,10 @@ class Middleware:
 
         self.last_rate_limit: RateLimitInfo = RateLimitInfo()
 
+        # time.monotonic() of the most recent response (0.0 = none yet);
+        # lets BfxRestInterface pick the newer of the auth/public headers.
+        self.last_response_at: float = 0.0
+
     def get(self, endpoint: str, params: "_Params | None" = None) -> Any:
         headers = {"Accept": "application/json"}
 
@@ -147,6 +151,7 @@ class Middleware:
         return self.__process_response(response)
 
     def __process_response(self, response: requests.Response) -> Any:
+        self.last_response_at = time.monotonic()
         self.last_rate_limit = RateLimitInfo.from_headers(
             dict(response.headers)
         )

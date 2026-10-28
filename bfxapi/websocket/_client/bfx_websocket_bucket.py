@@ -45,6 +45,7 @@ class BfxWebSocketBucket(Connection):
         event_emitter: EventEmitter,
         *,
         lossless_financial_decode: bool = False,
+        decimal_mode: bool | None = None,
     ) -> None:
         super().__init__(host)
         self.__decode_options = financial_decode_options(
@@ -59,7 +60,7 @@ class BfxWebSocketBucket(Connection):
         self.__condition = asyncio.locks.Condition()
 
         self.__handler = PublicChannelsHandler(
-            event_emitter=self.__event_emitter
+            event_emitter=self.__event_emitter, decimal_mode=decimal_mode
         )
 
     @property

@@ -3,6 +3,7 @@ from typing import Any
 from pyee.base import EventEmitter
 
 from bfxapi.types import serializers
+from bfxapi.types.labeler import decimal_mode_scope
 from bfxapi.websocket.subscriptions import (
     Book,
     Candles,
@@ -23,10 +24,18 @@ _TRADE_EVENTS: dict[str, str] = {
 
 
 class PublicChannelsHandler:
-    def __init__(self, event_emitter: EventEmitter) -> None:
+    def __init__(
+        self, event_emitter: EventEmitter, *, decimal_mode: bool | None = None
+    ) -> None:
         self.__event_emitter = event_emitter
+        self.__decimal_mode = decimal_mode
 
     def handle(self, subscription: Subscription, stream: list[Any]) -> None:
+        # Parse under the owning client's decimal mode, not a global one.
+        with decimal_mode_scope(self.__decimal_mode):
+            self.__dispatch(subscription, stream)
+
+    def __dispatch(self, subscription: Subscription, stream: list[Any]) -> None:
         if subscription["channel"] == "ticker":
             self.__ticker_channel_handler(subscription, stream)
         elif subscription["channel"] == "trades":
@@ -217,11 +226,14 @@ class PublicChannelsHandler:
             return
 
         if subscription["key"].startswith("liq:"):
-            self.__event_emitter.emit(
-                "liquidation_feed_update",
-                subscription,
-                serializers.Liquidation.parse(*stream[0][0]),
-            )
+            # A frame can carry several liquidations (a cascade): one event
+            # per entry, never only the first.
+            for entry in stream[0]:
+                self.__event_emitter.emit(
+                    "liquidation_feed_update",
+                    subscription,
+                    serializers.Liquidation.parse(*entry),
+                )
             return
 
     def __checksum_handler(self, subscription: Book, value: int) -> None:

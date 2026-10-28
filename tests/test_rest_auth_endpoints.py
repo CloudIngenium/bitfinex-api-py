@@ -1,3 +1,4 @@
+import dataclasses
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -718,6 +719,41 @@ class TestLedgers:
         assert result[0].amount == 0.5
         assert result[0].mts == 1609459300000
 
+    def test_get_ledgers_wallet_filter_and_field(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = [
+            [
+                2531822316,
+                "USD",
+                "funding",
+                1609459400000,
+                None,
+                1.25,
+                1001.25,
+                None,
+                "Margin Funding Payment on wallet funding",
+            ]
+        ]
+        result = ep.get_ledgers("USD", wallet="funding")
+        mock_m.post.assert_called_once_with(
+            "auth/r/ledgers/USD/hist",
+            body={
+                "category": None,
+                "start": None,
+                "end": None,
+                "limit": None,
+                "wallet": "funding",
+            },
+        )
+        assert result[0].wallet == "funding"
+        assert result[0].amount == 1.25
+
+    def test_ledger_wallet_is_last_and_optional(self):
+        # Positional construction from before the field existed still works.
+        ledger = Ledger(1, "USD", 1609459200000, 1.0, 2.0, "desc")
+        assert ledger.wallet is None
+        assert [f.name for f in dataclasses.fields(Ledger)][-1] == "wallet"
+
 
 class TestMarginInfo:
     def test_get_base_margin_info(self):
@@ -940,7 +976,7 @@ class TestPositions:
         mock_m.post.assert_called_once_with(
             "auth/r/positions/audit",
             body={
-                "ids": [111222],
+                "id": [111222],
                 "start": None,
                 "end": None,
                 "limit": 1,

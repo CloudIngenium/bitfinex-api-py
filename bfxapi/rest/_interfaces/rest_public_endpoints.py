@@ -57,6 +57,13 @@ def _candle_key(
     return key
 
 
+def _query(**values: str | int | float | Decimal | None) -> dict[str, str]:
+    """Query-string params: None dropped, numbers sent as their text."""
+    return {
+        key: str(value) for key, value in values.items() if value is not None
+    }
+
+
 class RestPublicEndpoints(Interface):
     def conf(self, config: str) -> Any:
         return self._m.get(f"conf/{config}")[0]
@@ -364,8 +371,11 @@ class RestPublicEndpoints(Interface):
     ) -> list[Liquidation]:
         params = {"sort": sort, "start": start, "end": end, "limit": limit}
         data = self._m.get("liquidations/hist", params=params)
+        # Each row wraps a list of liquidations; keep every entry.
         return [
-            serializers.Liquidation.parse(*sub_data[0]) for sub_data in data
+            serializers.Liquidation.parse(*entry)
+            for sub_data in data
+            for entry in sub_data
         ]
 
     def get_seed_candles(
@@ -429,14 +439,14 @@ class RestPublicEndpoints(Interface):
         *,
         price_limit: str | float | Decimal | None = None,
     ) -> TradingMarketAveragePrice:
+        # The docs send these as query-string params, and name the price
+        # cap `rate_limit` for trading pairs too.
         return serializers.TradingMarketAveragePrice.parse(
             *self._m.post(
                 "calc/trade/avg",
-                body={
-                    "symbol": symbol,
-                    "amount": amount,
-                    "price_limit": price_limit,
-                },
+                params=_query(
+                    symbol=symbol, amount=amount, rate_limit=price_limit
+                ),
             )
         )
 
@@ -451,12 +461,12 @@ class RestPublicEndpoints(Interface):
         return serializers.FundingMarketAveragePrice.parse(
             *self._m.post(
                 "calc/trade/avg",
-                body={
-                    "symbol": symbol,
-                    "amount": amount,
-                    "period": period,
-                    "rate_limit": rate_limit,
-                },
+                params=_query(
+                    symbol=symbol,
+                    amount=amount,
+                    period=period,
+                    rate_limit=rate_limit,
+                ),
             )
         )
 

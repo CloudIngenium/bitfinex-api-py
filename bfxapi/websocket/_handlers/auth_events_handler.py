@@ -4,7 +4,7 @@ from pyee.base import EventEmitter
 
 from bfxapi.types import serializers
 from bfxapi.types.dataclasses import FundingOffer, Order
-from bfxapi.types.labeler import _Serializer
+from bfxapi.types.labeler import _Serializer, decimal_mode_scope
 from bfxapi.types.notification import _Notification
 
 
@@ -55,10 +55,18 @@ class AuthEventsHandler:
         abbr: ser for abbrs, ser in _GROUPED.items() for abbr in abbrs
     }
 
-    def __init__(self, event_emitter: EventEmitter) -> None:
+    def __init__(
+        self, event_emitter: EventEmitter, *, decimal_mode: bool | None = None
+    ) -> None:
         self.__event_emitter = event_emitter
+        self.__decimal_mode = decimal_mode
 
     def handle(self, abbrevation: str, stream: Any) -> None:
+        # Parse under the owning client's decimal mode, not a global one.
+        with decimal_mode_scope(self.__decimal_mode):
+            self.__dispatch(abbrevation, stream)
+
+    def __dispatch(self, abbrevation: str, stream: Any) -> None:
         if abbrevation == "n":
             self.__notification(stream)
         elif abbrevation == "miu":
