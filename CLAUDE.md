@@ -73,5 +73,6 @@ examples/               # Usage examples (REST + WebSocket)
 - Use `Decimal` for monetary values, never `float`
 - WebSocket preferred over REST for real-time data (it does not draw on the REST request budget; each connection holds at most 25 subscriptions — see `bfx_websocket_bucket.py`)
 - REST rate limit: 90 req/5min on private endpoints
+- Opt-in financial decoding preserves original numeric tokens per client: `docs/financial-decoding.md`. Legacy model decoding remains the default.
 - Never hardcode API keys — use environment variables
 - asyncio-based WebSocket client; use `bfx.wss.run()` or `await bfx.wss.start()`

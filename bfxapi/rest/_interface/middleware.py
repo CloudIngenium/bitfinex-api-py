@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import requests
 
+from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_decoder import JSONDecoder
 from bfxapi._utils.json_encoder import JSONEncoder
 from bfxapi.exceptions import InvalidCredentialError
@@ -77,8 +78,13 @@ class Middleware:
         host: str,
         api_key: str | None = None,
         api_secret: str | None = None,
+        *,
+        lossless_financial_decode: bool = False,
     ):
         self.__host = host
+        self.__decode_options = financial_decode_options(
+            lossless_financial_decode
+        )
 
         self.__api_key = api_key
 
@@ -157,7 +163,7 @@ class Middleware:
                 retry_after_ms=max(retry_ms, 1000),
             )
 
-        data = response.json(cls=JSONDecoder)
+        data = response.json(cls=JSONDecoder, **self.__decode_options)
 
         if isinstance(data, list) and len(data) > 0 and data[0] == "error":
             self.__handle_error(data)

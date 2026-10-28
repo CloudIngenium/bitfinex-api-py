@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "testedBaseSha": "6a09932e7f8e334bb4e0e864e8e3c1ddb34e02f4",
+  "validation": {
+    "casesPassed": 239,
+    "coveragePercent": 82.4,
+    "checks": [
+      "pytest tests with configured coverage gate",
+      "mypy: 37 source files",
+      "ruff and formatter",
+      "isolated wheel and sdist build 6.1.0",
+      "Final 239-case run after package version and line-ending normalization"
+    ],
+    "interpreter": "Python 3.12.3 SDK environment; Python 3.13.15 compatibility additionally exercised by lending",
+    "limitations": [
+      "Dependency vulnerability scan not executed for Python in this artifact."
+    ]
+  },
+  "sourceHashes": [
+    {
+      "path": "bfxapi/__init__.py",
+      "sha256": "2c82c438b6baec2c17561741dda3ee51cc7e75831163d93761786825a8b73143"
+    },
+    {
+      "path": "bfxapi/_client.py",
+      "sha256": "4c75c827b978e632f8b9834255cc4ec5d47ce59ad3f07dcf98493b032aebac62"
+    },
+    {
+      "path": "bfxapi/_utils/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bfxapi/_utils/financial_json.py",
+      "sha256": "8946db6438053fce4e18e5156e0cfeb5fdf81a82498d8c80b1df4494c7ca65de"
+    },
+    {
+      "path": "bfxapi/_utils/json_decoder.py",
+      "sha256": "b0e341fbaa6452643103949599aed5bca203afa7e38ff3d9696e69659b72b9f6"
+    },
+    {
+      "path": "bfxapi/_utils/json_encoder.py",
+      "sha256": "69fd56dd0c2a3a4d296a655566d95e6d76b1602053b5c935b1c969725c819b74"
+    },
+    {
+      "path": "bfxapi/_utils/logging.py",
+      "sha256": "aa00b5aaad740456dba91dd23833cc824e3f3ecdfcb058f4cd89e0ff47999b98"
+    },
+    {
+      "path": "bfxapi/_version.py",
+      "sha256": "3c3e5a819d3f0d7aac14b30147485a7195772dbcc66c7f2a9fe8fb308026dd7b"
+    },
+    {
+      "path": "bfxapi/exceptions.py",
+      "sha256": "dff6b07f67366c542b88ee2016029b39b4bc4c0e5e9e83d4b208e658ab564642"
+    },
+    {
+      "path": "bfxapi/rest/__init__.py",
+      "sha256": "82a387617e79290ef183cf6cc981ca7f68e3bb6a10637760b18a5a2fba87a20c"
+    },
+    {
+      "path": "bfxapi/rest/_bfx_rest_interface.py",
+      "sha256": "3abcb9182832470eb70b38859f39ef9d45dbcf0af24124a8ac89f089be710a58"
+    },
+    {
+      "path": "bfxapi/rest/_interface/__init__.py",
+      "sha256": "7e4c7638cf2694e7b4cd68a86f860a50dde3b093ec10434b7a04d3b684aa4ff3"
+    },
+    {
+      "path": "bfxapi/rest/_interface/interface.py",
+      "sha256": "00c8afec0901970a0bbaa2fde70cc722c2c3a32207e1daf15af872f379ab8f6d"
+    },
+    {
+      "path": "bfxapi/rest/_interface/middleware.py",
+      "sha256": "b7ad92bc866d6251fe515a20f37b233ed76fbef2a24da569131b5091a54cd419"
+    },
+    {
+      "path": "bfxapi/rest/_interfaces/__init__.py",
+      "sha256": "82db882795f87e6dfe5f706c5b0d37bd86097b68f01f332c81b2a0452eec1ff1"
+    },
+    {
+      "path": "bfxapi/rest/_interfaces/rest_auth_endpoints.py",
+      "sha256": "6ad7bfe582b5bd889a51ff8e673eb5d57e10a6d42082e8587c059ab528c8acd4"
+    },
+    {
+      "path": "bfxapi/rest/_interfaces/rest_public_endpoints.py",
+      "sha256": "c675c4e0cc7dd6273df9a37e1b9e3bdd84d3a33e65dd084f303a2fe96994ea7e"
+    },
+    {
+      "path": "bfxapi/rest/exceptions.py",
+      "sha256": "068dc3d1c82a4828fdcf9e6e3b76ca85ebba16f51e031862080e9598fa7334fc"
+    },
+    {
+      "path": "bfxapi/rest/retry.py",
+      "sha256": "5e69d6139a22714edd25a4729cc849a526e288aef869d56ca5cec87c4c1f23c0"
+    },
+    {
+      "path": "bfxapi/types/__init__.py",
+      "sha256": "544cd37a71e505bda425b8082a0e736db613f32e41d104483691aad08a00b5cb"
+    },
+    {
+      "path": "bfxapi/types/dataclasses.py",
+      "sha256": "c0895a46dad0bf33c309749f931e780a702a79ac793b1bc2cb0574ed5de7af8b"
+    },
+    {
+      "path": "bfxapi/types/labeler.py",
+      "sha256": "3aa9a321a72d73e5839cca81a09f8be078fea4c716c7dc13edf936bc9122f92f"
+    },
+    {
+      "path": "bfxapi/types/notification.py",
+      "sha256": "4c4191b25c20862b785a48ac04217664345ec461fc7841705ee9bfb069b619f2"
+    },
+    {
+      "path": "bfxapi/types/serializers.py",
+      "sha256": "b45597d5fb8d1f6390194caf6244fd69f3ded37b718e39dfc58f8689fbb1b5c2"
+    },
+    {
+      "path": "bfxapi/websocket/__init__.py",
+      "sha256": "0a49b6425ab76cdb9be742ac7c9253fb5752ce9aa928ef11686cc459bd8a97cc"
+    },
+    {
+      "path": "bfxapi/websocket/_client/__init__.py",
+      "sha256": "1ea69198fd9da4d3d443e3dd934e5023d781819f05ea419bb4fb125a7376fe28"
+    },
+    {
+      "path": "bfxapi/websocket/_client/bfx_websocket_bucket.py",
+      "sha256": "289dfff4b17cab8e963fcc1324eda2bae1133f85f51bb9eb279a7d9563aa0b88"
+    },
+    {
+      "path": "bfxapi/websocket/_client/bfx_websocket_client.py",
+      "sha256": "1af7b75de68c59c4749cea1d2b74352a144e7013c8b150afef0deded9daeeec6"
+    },
+    {
+      "path": "bfxapi/websocket/_client/bfx_websocket_inputs.py",
+      "sha256": "5c31dea2fa5fadbece7666c7cc7cd170d4ea4294d901dbb0281b0785aa98292b"
+    },
+    {
+      "path": "bfxapi/websocket/_connection.py",
+      "sha256": "d9a9488c669b5b18b643b7163a08812f6d386ca200af0906f388de549a3d50f3"
+    },
+    {
+      "path": "bfxapi/websocket/_event_emitter/__init__.py",
+      "sha256": "2dd9c40e3a44261dcad729e1ef015f5f2c3f72923702bcc4db41e991437c25be"
+    },
+    {
+      "path": "bfxapi/websocket/_event_emitter/bfx_event_emitter.py",
+      "sha256": "d24651b946d306ffdc4be48e1bcaf397b712c75e37c036d39fcd5cf6c2e4c956"
+    },
+    {
+      "path": "bfxapi/websocket/_handlers/__init__.py",
+      "sha256": "abf5fac64e018e91342614aba7599748ae004835d72d8dec44695607b5564521"
+    },
+    {
+      "path": "bfxapi/websocket/_handlers/auth_events_handler.py",
+      "sha256": "8ecdefb73b7685923c549a8ee8a853cac7843ea0d59abb3928ded28f491ff9ea"
+    },
+    {
+      "path": "bfxapi/websocket/_handlers/public_channels_handler.py",
+      "sha256": "23a2820695cec4b4d0c116fe06ff041786df5bbccb24bcceac6fc2900fe9c815"
+    },
+    {
+      "path": "bfxapi/websocket/exceptions.py",
+      "sha256": "05748e6fdbbd098ba13115fd868995eddc9bc641b068478d277d77475fd184a2"
+    },
+    {
+      "path": "bfxapi/websocket/subscriptions.py",
+      "sha256": "beccd31f93c7e80358894d745ac8e95393c4ed2548fe7ad56b37495a5b2da1c6"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_event_emitter.py",
+      "sha256": "e6ced3edd0138b78ca3820dcb735d483e2d525c85d594b8b98244f92e3911222"
+    },
+    {
+      "path": "tests/test_financial_json.py",
+      "sha256": "b369ce179e1129cccd0136fa83bc321bb30a3698ab66a148a5167904907c6a59"
+    },
+    {
+      "path": "tests/test_json_decoder.py",
+      "sha256": "a052e0af13503edc8d1787abf4a5a3c4eb6e8614cce104d613b2493010c561f5"
+    },
+    {
+      "path": "tests/test_json_encoder.py",
+      "sha256": "32e73739dbf0d6b6e80c4c486ba8594526b3ef7d2fed0ef8f2a636f957a4a090"
+    },
+    {
+      "path": "tests/test_labeler.py",
+      "sha256": "9b4859bc8611f2f7be43be714bfdd517fa66f0f1340461c2c9783b05854509df"
+    },
+    {
+      "path": "tests/test_rest_middleware.py",
+      "sha256": "7a7b410e67a3b7523a0b5c560bf5e9e7d87c8b8df9d6fc14c98cddcda0ac8a44"
+    },
+    {
+      "path": "tests/test_rest_public_endpoints.py",
+      "sha256": "09703b37c3a3acfe987411db9e22aa6dee9b4526c11e23da2dd044bd5c989f85"
+    },
+    {
+      "path": "tests/test_rest_retry.py",
+      "sha256": "29929bbcd336ef107ebaa037716d0ee3c31d47aa52b373aa71581f9ba041a165"
+    },
+    {
+      "path": "tests/test_serializers.py",
+      "sha256": "00fdbe40d68fc3ed3ce6c36ef0570c2737f1c4f7fb129fd245f7617ecb708f7b"
+    },
+    {
+      "path": "tests/test_websocket_client.py",
+      "sha256": "cc4de59dd507b0ab3e51f21f39c4d4a3621e2f132559fb9074e37f604e4f137c"
+    },
+    {
+      "path": "tests/test_websocket_connection.py",
+      "sha256": "633727698a95745d6a5e722872cf0e7093e0518b6584db5f8a1933c61bd392e9"
+    },
+    {
+      "path": "tests/test_websocket_handlers.py",
+      "sha256": "a693c43e2ec58653acb66c83f0763a06e1e6bf1b1c0f33c0f1fa7e0536b0aa6f"
+    }
+  ],
+  "sourceCoverage": "Hashes bind the code tree. Counts are actual test cases, not file wrapper tests. Existing omitted integration coverage remains explicit.",
+  "productionAccess": false,
+  "publication": "candidate only; not published or deployed"
+}

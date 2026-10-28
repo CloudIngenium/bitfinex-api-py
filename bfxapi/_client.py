@@ -28,8 +28,18 @@ class Client:
         timeout: int | None = 60 * 15,
         log_filename: str | None = None,
         decimal_mode: bool = False,
+        lossless_financial_decode: bool = False,
     ) -> None:
-        set_decimal_mode(decimal_mode)
+        if lossless_financial_decode and decimal_mode:
+            # Two decoders for the same numbers: the lossless one would win
+            # and `decimal_mode` would be dropped without a word.
+            raise ValueError(
+                "decimal_mode and lossless_financial_decode are mutually "
+                "exclusive; lossless_financial_decode already yields Decimal."
+            )
+
+        if not lossless_financial_decode:
+            set_decimal_mode(decimal_mode)
         credentials: _Credentials | None = None
 
         if api_key and api_secret:
@@ -47,7 +57,12 @@ class Client:
                 "You must provide both API-KEY and API-SECRET (missing API-SECRET)."
             )
 
-        self.rest = BfxRestInterface(rest_host, api_key, api_secret)
+        self.rest = BfxRestInterface(
+            rest_host,
+            api_key,
+            api_secret,
+            lossless_financial_decode=lossless_financial_decode,
+        )
 
         logger = ColorLogger("bfxapi", level="INFO")
 
@@ -55,5 +70,9 @@ class Client:
             logger.register(filename=log_filename)
 
         self.wss = BfxWebSocketClient(
-            wss_host, credentials=credentials, timeout=timeout, logger=logger
+            wss_host,
+            credentials=credentials,
+            timeout=timeout,
+            logger=logger,
+            lossless_financial_decode=lossless_financial_decode,
         )
