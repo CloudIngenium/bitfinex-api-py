@@ -59,7 +59,9 @@ def _candle_key(
 
 def _query(**values: str | int | float | Decimal | None) -> dict[str, str]:
     """Query-string params: None dropped, numbers sent as their text."""
-    return {key: str(value) for key, value in values.items() if value is not None}
+    return {
+        key: str(value) for key, value in values.items() if value is not None
+    }
 
 
 class RestPublicEndpoints(Interface):

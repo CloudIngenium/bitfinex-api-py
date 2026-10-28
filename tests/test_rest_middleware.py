@@ -1,12 +1,13 @@
 import hashlib
 import hmac
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests as req_lib
 
 from bfxapi.exceptions import InvalidCredentialError
-from bfxapi.rest._interface.middleware import Middleware, _Error
+from bfxapi.rest._interface.middleware import Middleware, RateLimitInfo, _Error
 from bfxapi.rest.exceptions import (
     GenericError,
     InsufficientFundsError,
@@ -328,3 +329,67 @@ class TestErrorEnum:
         assert _Error.ERR_RATE_LIMIT == 10010
         assert _Error.ERR_PARAMS == 10020
         assert _Error.ERR_AUTH_FAIL == 10100
+
+
+def _response(headers: dict[str, str], status_code: int = 200) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = headers
+    response.json.return_value = [1]
+    return response
+
+
+class TestLastResponseAt:
+    def test_zero_before_any_response(self):
+        assert Middleware("https://api.example.com").last_response_at == 0.0
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_set_on_every_response(self, mock_get):
+        mock_get.return_value = _response({})
+        m = Middleware("https://api.example.com")
+        before = time.monotonic()
+        m.get("v2/platform/status")
+        first = m.last_response_at
+        assert first >= before
+        m.get("v2/platform/status")
+        assert m.last_response_at >= first
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_set_on_error_responses_too(self, mock_get):
+        mock_get.return_value = _response({}, status_code=429)
+        m = Middleware("https://api.example.com")
+        with pytest.raises(RateLimitError):
+            m.get("v2/platform/status")
+        assert m.last_response_at > 0.0
+
+
+class TestBfxRestInterfaceLastRateLimit:
+    def _rest(self):
+        from bfxapi.rest import BfxRestInterface
+
+        return BfxRestInterface("https://api.example.com")
+
+    def test_defaults_to_auth_before_any_response(self):
+        rest = self._rest()
+        assert rest.last_rate_limit is rest.auth._m.last_rate_limit
+
+    def test_returns_the_most_recent_middleware(self):
+        rest = self._rest()
+        auth, public = rest.auth._m, rest.public._m
+        auth.last_rate_limit = RateLimitInfo(remaining=10)
+        public.last_rate_limit = RateLimitInfo(remaining=20)
+
+        auth.last_response_at, public.last_response_at = 1.0, 2.0
+        assert rest.last_rate_limit.remaining == 20
+
+        auth.last_response_at = 3.0
+        assert rest.last_rate_limit.remaining == 10
+
+    @patch("bfxapi.rest._interface.middleware.requests.get")
+    def test_follows_real_responses(self, mock_get):
+        rest = self._rest()
+        mock_get.return_value = _response(
+            {"x-ratelimit-remaining": "7", "x-ratelimit-limit": "90"}
+        )
+        rest.public._m.get("v2/platform/status")
+        assert rest.last_rate_limit == RateLimitInfo(remaining=7, limit=90)

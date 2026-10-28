@@ -686,6 +686,34 @@ class TestLiquidations:
         assert len(result) == 1
         assert isinstance(result[0], Liquidation)
 
+    def test_get_liquidations_keeps_every_entry(self):
+        def entry(pos_id: int, symbol: str) -> list[object]:
+            return [
+                None,
+                pos_id,
+                1609459200000,
+                None,
+                symbol,
+                0.5,
+                10000,
+                None,
+                1,
+                0,
+                None,
+                9800,
+            ]
+
+        ep, mock_m = _make_endpoint()
+        # Two rows; the first wraps a cascade of two liquidations.
+        mock_m.get.return_value = [
+            [entry(1, "tBTCUSD"), entry(2, "tETHUSD")],
+            [entry(3, "tLTCUSD")],
+        ]
+        result = ep.get_liquidations()
+        assert [r.pos_id for r in result] == [1, 2, 3]
+        assert [r.symbol for r in result] == ["tBTCUSD", "tETHUSD", "tLTCUSD"]
+        assert all(isinstance(r, Liquidation) for r in result)
+
 
 class TestLeaderboards:
     def test_get_leaderboards_hist(self):
@@ -759,9 +787,23 @@ class TestMarketAveragePrice:
         result = ep.get_trading_market_average_price("tBTCUSD", "0.5")
         mock_m.post.assert_called_once_with(
             "calc/trade/avg",
-            body={"symbol": "tBTCUSD", "amount": "0.5", "price_limit": None},
+            params={"symbol": "tBTCUSD", "amount": "0.5"},
         )
         assert isinstance(result, TradingMarketAveragePrice)
+
+    def test_get_trading_market_average_price_with_limit(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = [10050.5, 0.5]
+        ep.get_trading_market_average_price("tBTCUSD", "0.5", price_limit=10100)
+        # The docs name the trading price cap `rate_limit` too.
+        mock_m.post.assert_called_once_with(
+            "calc/trade/avg",
+            params={
+                "symbol": "tBTCUSD",
+                "amount": "0.5",
+                "rate_limit": "10100",
+            },
+        )
 
     def test_get_funding_market_average_price(self):
         ep, mock_m = _make_endpoint()
@@ -769,12 +811,7 @@ class TestMarketAveragePrice:
         result = ep.get_funding_market_average_price("fUSD", "1000", 30)
         mock_m.post.assert_called_once_with(
             "calc/trade/avg",
-            body={
-                "symbol": "fUSD",
-                "amount": "1000",
-                "period": 30,
-                "rate_limit": None,
-            },
+            params={"symbol": "fUSD", "amount": "1000", "period": "30"},
         )
         assert isinstance(result, FundingMarketAveragePrice)
 

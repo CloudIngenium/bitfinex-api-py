@@ -82,10 +82,20 @@ def test_lossless_constructor_does_not_modify_global_legacy_decimal_mode():
 
     set_decimal_mode(True)
     try:
-        Client(lossless_financial_decode=True)
-        assert labeler._decimal_mode is True
+        client = Client(lossless_financial_decode=True)
+        # The process-wide default is untouched by any constructor...
+        assert labeler.decimal_mode_enabled() is True
+        # ...and the lossless client scopes the legacy conversion off for
+        # itself, since its decoder already yields Decimal.
+        assert client.rest.public._decimal_mode is False
+        assert client.rest.auth._decimal_mode is False
+        Client(decimal_mode=True)
+        Client()
+        assert labeler.decimal_mode_enabled() is True
     finally:
         set_decimal_mode(False)
+    Client(decimal_mode=True)
+    assert labeler.decimal_mode_enabled() is False
 
 
 @pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])

@@ -169,3 +169,51 @@ class TestGetAuthenticationMessage:
         )
         assert isinstance(msg["authNonce"], int)
         assert msg["authNonce"] > 0
+
+    def test_dms_omitted_by_default(self):
+        msg = json.loads(
+            Connection._get_authentication_message(
+                api_key="key", api_secret="secret"
+            )
+        )
+        assert "dms" not in msg
+
+    def test_dms_included_when_set(self):
+        msg = json.loads(
+            Connection._get_authentication_message(
+                api_key="key", api_secret="secret", dms=4
+            )
+        )
+        assert msg["dms"] == 4
+        # The signature covers only the payload, so dms does not alter it.
+        assert msg["authPayload"] == f"AUTH{msg['authNonce']}"
+
+
+class TestClientDms:
+    def _credentials(self, client):
+        return client.wss._BfxWebSocketClient__credentials
+
+    def test_client_dms_reaches_the_auth_message(self):
+        from bfxapi import Client
+
+        client = Client(api_key="key", api_secret="secret", dms=4)
+        credentials = self._credentials(client)
+        assert credentials["dms"] == 4
+        # The WS client builds its auth frame with **credentials.
+        msg = json.loads(Connection._get_authentication_message(**credentials))
+        assert msg["dms"] == 4
+
+    def test_client_without_dms_sends_none(self):
+        from bfxapi import Client
+
+        client = Client(api_key="key", api_secret="secret")
+        credentials = self._credentials(client)
+        assert "dms" not in credentials
+        msg = json.loads(Connection._get_authentication_message(**credentials))
+        assert "dms" not in msg
+
+    def test_dms_without_credentials_is_ignored(self):
+        from bfxapi import Client
+
+        client = Client(dms=4)
+        assert self._credentials(client) is None
