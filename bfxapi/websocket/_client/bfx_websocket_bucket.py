@@ -88,6 +88,7 @@ class BfxWebSocketBucket(Connection):
 
     async def __on_subscribed(self, message: dict[str, Any]) -> None:
         chan_id = cast(int, message["chan_id"])
+
         sub_id = cast(str, message["sub_id"])
 
         self.__pendings = [
@@ -98,8 +99,8 @@ class BfxWebSocketBucket(Connection):
             # Unsubscribed while still pending. The subscribe frame was
             # already on the wire, so the server opened the channel anyway -
             # and this confirmation is the first moment a chan_id exists to
-            # close it with. Without this the channel would stream forever
-            # into a consumer that believes it cancelled the subscription.
+            # close it with. Without this the channel streams forever into a
+            # consumer that believes it cancelled the subscription.
             self.__cancellations.discard(sub_id)
 
             await self._websocket.send(
@@ -162,6 +163,7 @@ class BfxWebSocketBucket(Connection):
                 # from: drop the request here and close the channel the moment
                 # the server confirms it (see __on_subscribed).
                 self.__pendings.remove(pending)
+
                 self.__cancellations.add(sub_id)
 
                 return
@@ -177,7 +179,7 @@ class BfxWebSocketBucket(Connection):
     @Connection._require_websocket_connection
     async def resubscribe(self, sub_id: str) -> None:
         # Only confirmed subscriptions are reissued. A pending one is already
-        # being established, and its frame has not been answered yet: sending
+        # being established and its frame has not been answered yet: sending
         # it again would open two channels under a single sub_id.
         for subscription in list(self.__subscriptions.values()):
             if subscription["sub_id"] == sub_id:
@@ -191,12 +193,12 @@ class BfxWebSocketBucket(Connection):
 
     def has(self, sub_id: str) -> bool:
         # `ids` counts pendings, so a duplicate `subscribe` is refused from the
-        # instant the frame is sent. `has` used to count only confirmed ones,
-        # which left a sub_id that was simultaneously "taken" (SubIdError) and
+        # instant the frame is sent. `has` counted only confirmed ones, which
+        # left a sub_id that was simultaneously "taken" (SubIdError) and
         # "unknown" (UnknownSubscriptionError) - unusable and uncancellable.
         # The window is not a few milliseconds either: __recover_state moves
-        # EVERY subscription back to pending, so after each reconnect the whole
-        # set is unreachable until the server has confirmed it.
+        # EVERY subscription back to pending, so after each reconnection the
+        # whole set is unreachable until the server has confirmed it.
         if any(pending["subId"] == sub_id for pending in self.__pendings):
             return True
 
