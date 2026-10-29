@@ -23,9 +23,12 @@ def _clear(dictionary: dict[str, Any]) -> dict[str, Any]:
 
 
 def _as_decimal(value: float | Decimal) -> Decimal:
-    # A float goes through its shortest repr (str == repr for floats), so
-    # 0.1 stays 0.1 instead of Decimal(0.1)'s 55-digit binary expansion.
-    return Decimal(repr(value)) if isinstance(value, float) else value
+    # float.__repr__ is the shortest round-trip text, so 0.1 stays 0.1
+    # instead of Decimal(0.1)'s 55-digit binary expansion. Called unbound so
+    # a float subclass with its own repr (np.float64(0.5)) still parses.
+    if isinstance(value, float):
+        return Decimal(float.__repr__(value))
+    return value
 
 
 def _require_finite(value: float | Decimal) -> Decimal:

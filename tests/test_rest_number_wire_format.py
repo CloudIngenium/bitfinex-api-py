@@ -84,6 +84,17 @@ class TestPlainDecimal:
         # would send 0.1 as 0.1000000000000000055511151231257827...
         assert _plain_decimal(value) == expected
 
+    def test_float_subclass_with_own_repr(self):
+        # np.float64's repr is "np.float64(0.5)"; str() used to send "0.5".
+        class Float64(float):
+            def __repr__(self) -> str:
+                return f"np.float64({float.__repr__(self)})"
+
+        assert _plain_decimal(Float64(0.5)) == "0.5"
+        assert _plain_decimal(Float64(1e-05)) == "0.00001"
+        assert _query(amount=Float64(0.1)) == {"amount": "0.1"}
+        assert json.dumps(Float64(0.1), cls=_FiniteJSONEncoder) == '"0.1"'
+
     def test_decimal_precision_beyond_context_is_kept(self):
         # No normalize()/quantize: digits past the 28-digit context survive.
         value = Decimal("0.12345678901234567890123456789012345")

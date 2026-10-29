@@ -85,10 +85,14 @@ class RestPublicEndpoints(Interface):
     ``decimal_mode``. Constructed directly with ``decimal_mode=None`` (the
     default), the group sets no decimal-mode scope of its own: each call
     parses under whatever scope is active where it is made. Called from a
-    WebSocket event handler, that is the emitting Client's ``decimal_mode``,
-    because the WebSocket handlers emit inside their own
-    ``decimal_mode_scope``; called anywhere else, the process-wide default
-    from ``set_decimal_mode``. Pass ``decimal_mode=True/False`` to pin it.
+    handler of a WebSocket data event (channel updates and account events,
+    which the WebSocket handlers emit inside their own
+    ``decimal_mode_scope``), that is the emitting Client's ``decimal_mode``;
+    an async handler inherits it too, but work handed to an executor does
+    not. Called from a lifecycle event (``open``, ``authenticated``,
+    ``subscribed``, ``disconnected``, ...) or anywhere else, it is the
+    process-wide default from ``set_decimal_mode``. Pass
+    ``decimal_mode=True/False`` to pin it.
     """
 
     def conf(self, config: str) -> Any:
