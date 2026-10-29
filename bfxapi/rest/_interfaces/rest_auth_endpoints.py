@@ -4,6 +4,9 @@ from typing import Any, Literal
 from bfxapi.rest._interface import Interface
 from bfxapi.rest.exceptions import GenericError
 from bfxapi.types import (
+    AccountSummary,
+    Alert,
+    AuditHistory,
     BalanceAvailable,
     BaseMarginInfo,
     DepositAddress,
@@ -15,10 +18,12 @@ from bfxapi.types import (
     FundingLoan,
     FundingOffer,
     FundingTrade,
+    KeyPermission,
     Ledger,
     LightningNetworkInvoice,
     LoginHistory,
     Movement,
+    MovementInfo,
     Notification,
     Order,
     OrderTrade,
@@ -37,7 +42,34 @@ from bfxapi.types import (
     Withdrawal,
     serializers,
 )
+from bfxapi.types.labeler import decimal_mode_enabled
 from bfxapi.types.notification import _Notification
+
+
+def _slot(data: Any, *path: int) -> Any:
+    """``data[path[0]][path[1]]...``, or None when a level is missing."""
+    for index in path:
+        if not isinstance(data, list) or index >= len(data):
+            return None
+        data = data[index]
+    return data
+
+
+def _money(value: Any) -> Any:
+    """Numbers nested in dicts and lists as Decimal when decimal mode is on.
+
+    The serializer converts top-level MONETARY_FIELDS only; this covers the
+    per-currency maps, so they add up with the Decimal totals.
+    """
+    if not decimal_mode_enabled():
+        return value
+    if isinstance(value, dict):
+        return {key: _money(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_money(item) for item in value]
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return Decimal(str(value))
+    return value
 
 
 class RestAuthEndpoints(Interface):
@@ -57,6 +89,66 @@ class RestAuthEndpoints(Interface):
         return [
             serializers.LoginHistory.parse(*sub_data)
             for sub_data in self._m.post("auth/r/logins/hist")
+        ]
+
+    def get_account_summary(self) -> AccountSummary:
+        """Fee rates, 30-day trading volume and fees, 30-day funding
+        earnings and LEO level of the account.
+
+        A section missing from the response comes back as None.
+        """
+        # Keys as sent: the volume and fee maps are keyed by currency code
+        # ("USD", "vol_BFX"), which snake-casing would mangle.
+        data = self._m.post("auth/r/summary", raw_keys=True)
+
+        leo = _slot(data, 9)
+        if not isinstance(leo, dict):
+            leo = {}
+
+        return serializers.AccountSummary.parse(
+            _slot(data, 4, 0, 0),
+            _slot(data, 4, 0, 5),
+            _slot(data, 4, 1, 0),
+            _slot(data, 4, 1, 1),
+            _slot(data, 4, 1, 2),
+            _slot(data, 4, 1, 5),
+            _money(_slot(data, 5, 0)),
+            _money(_slot(data, 5, 1)),
+            _slot(data, 5, 2),
+            _money(_slot(data, 6, 1)),
+            _slot(data, 6, 2),
+            leo.get("leo_lev"),
+            leo.get("leo_amount_avg"),
+        )
+
+    def get_key_permissions(self) -> list[KeyPermission]:
+        """Read/write permissions of the API key in use, one per scope."""
+        return [
+            serializers.KeyPermission.parse(*sub_data)
+            for sub_data in self._m.post("auth/r/permissions")
+        ]
+
+    def get_audit_history(
+        self,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        limit: int | None = None,
+    ) -> list[AuditHistory]:
+        """Account changelog (the docs' "Changelog"); ``limit`` max 500."""
+        return [
+            serializers.AuditHistory.parse(*sub_data)
+            for sub_data in self._m.post(
+                "auth/r/audit/hist",
+                body={"start": start, "end": end, "limit": limit},
+            )
+        ]
+
+    def get_alerts(self) -> list[Alert]:
+        """Active price alerts. Read only: alerts are not set or deleted."""
+        return [
+            serializers.Alert.parse(*sub_data)
+            for sub_data in self._m.post("auth/r/alerts")
         ]
 
     def get_balance_available_for_orders_or_offers(
@@ -392,9 +484,10 @@ class RestAuthEndpoints(Interface):
     def get_derivative_position_collateral_limits(
         self, symbol: str
     ) -> DerivativePositionCollateralLimits:
+        # The documented path is plural: `.../collateral/limits`.
         return serializers.DerivativePositionCollateralLimits.parse(
             *self._m.post(
-                "auth/calc/deriv/collateral/limit", body={"symbol": symbol}
+                "auth/calc/deriv/collateral/limits", body={"symbol": symbol}
             )
         )
 
@@ -667,15 +760,32 @@ class RestAuthEndpoints(Interface):
         start: str | None = None,
         end: str | None = None,
         limit: int | None = None,
+        ids: list[int] | None = None,
+        address: str | None = None,
     ) -> list[Movement]:
+        """Past deposits and withdrawals, optionally filtered by movement
+        ``ids`` or by deposit ``address``."""
         if currency is None:
             endpoint = "auth/r/movements/hist"
         else:
             endpoint = f"auth/r/movements/{currency}/hist"
 
+        body: dict[str, Any] = {"start": start, "end": end, "limit": limit}
+
+        # Sent only when asked for, so the default request body is unchanged.
+        # The API field for the movement ids is `id`.
+        if ids is not None:
+            body["id"] = ids
+        if address is not None:
+            body["address"] = address
+
         return [
             serializers.Movement.parse(*sub_data)
-            for sub_data in self._m.post(
-                endpoint, body={"start": start, "end": end, "limit": limit}
-            )
+            for sub_data in self._m.post(endpoint, body=body)
         ]
+
+    def get_movement_info(self, id: int) -> MovementInfo:
+        """Detailed information about one deposit or withdrawal."""
+        return serializers.MovementInfo.parse(
+            *self._m.post("auth/r/movements/info", body={"id": id})
+        )

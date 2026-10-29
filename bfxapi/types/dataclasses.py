@@ -493,6 +493,38 @@ class Movement(_Type):
     destination_address: str
     transaction_id: str
     withdraw_transaction_note: str
+    # Index 17 on the wire (PAYMENT_ID, when relevant). Last here, with a
+    # default, so positional construction keeps working.
+    payment_id: str | None = None
+
+
+@dataclass
+class MovementInfo(_Type):
+    """Detailed view of one deposit or withdrawal (``auth/r/movements/info``).
+
+    Field names keep Movement's spelling where they overlap (``mts_start``,
+    ``mts_update``); the bank fields are only populated for wire movements.
+    """
+
+    id: int
+    currency: str
+    currency_method: str
+    remark: str | None
+    mts_start: int
+    mts_update: int
+    status: str
+    amount: float
+    fees: float
+    destination_address: str | None
+    memo: str | None
+    transaction_id: str | None
+    movement_note: str | None
+    bank_fees: float | None
+    bank_router_id: int | None
+    external_bank_mov_id: str | None
+    external_bank_mov_status: str | None
+    external_bank_mov_description: str | None
+    external_bank_acc_info: dict[str, Any] | None
 
 
 @dataclass
@@ -611,6 +643,66 @@ class DerivativePositionCollateralLimits(_Type):
 class BalanceInfo(_Type):
     aum: float
     aum_net: float
+
+
+@dataclass
+class AccountSummary(_Type):
+    """Fee rates, 30-day volume, fees, funding earnings and LEO level
+    (``auth/r/summary``).
+
+    The nested response is read by position: maker rates from ``[4][0]``,
+    taker rates from ``[4][1]``, volume and fees from ``[5]``, funding
+    earnings from ``[6]`` and the LEO object from ``[9]``.
+    """
+
+    maker_fee: float | None
+    deriv_rebate: float | None
+    taker_fee_to_crypto: float | None
+    taker_fee_to_stable: float | None
+    taker_fee_to_fiat: float | None
+    deriv_taker_fee: float | None
+    #: One object per currency plus a ``"Total (USD)"`` entry.
+    trade_vol_30d: list[dict[str, Any]] | None
+    fees_trading_30d: dict[str, float] | None
+    fees_trading_total_30d: float | None
+    funding_earnings_30d: dict[str, float] | None
+    funding_earnings_total_30d: float | None
+    leo_lev: int | None
+    leo_amount_avg: float | None
+
+
+@dataclass
+class KeyPermission(_Type):
+    #: account, history, orders, positions, funding, settings, wallets,
+    #: withdraw, ui_withdraw or bfxpay.
+    scope: str
+    #: 1 when the key may read this scope, else 0.
+    read: int
+    #: 1 when the key may write this scope, else 0.
+    write: int
+
+
+@dataclass
+class AuditHistory(_Type):
+    """One account changelog entry (``auth/r/audit/hist``)."""
+
+    mts_create: int
+    log: str
+    ip: str | None
+    #: Documented as an object; the documented example sends the browser's
+    #: user-agent string, so it is passed through untouched.
+    user_agent: Any
+
+
+@dataclass
+class Alert(_Type):
+    #: ``"type:pair:price"``, e.g. ``"price:tETHUSD:220"``.
+    info: str
+    type: str
+    pair: str
+    price: float
+    #: Starts at 100 and drops each time the alert fires; removed at 0.
+    countdown: int
 
 
 # endregion

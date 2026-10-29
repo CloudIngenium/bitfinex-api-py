@@ -1,9 +1,17 @@
 import dataclasses
+from decimal import Decimal
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import requests
+
+from bfxapi import Client
+from bfxapi.rest._interface.middleware import Middleware
 from bfxapi.rest._interfaces.rest_auth_endpoints import RestAuthEndpoints
 from bfxapi.types import (
+    AccountSummary,
+    Alert,
+    AuditHistory,
     BalanceAvailable,
     BaseMarginInfo,
     DepositAddress,
@@ -15,10 +23,12 @@ from bfxapi.types import (
     FundingLoan,
     FundingOffer,
     FundingTrade,
+    KeyPermission,
     Ledger,
     LightningNetworkInvoice,
     LoginHistory,
     Movement,
+    MovementInfo,
     Notification,
     Order,
     OrderTrade,
@@ -1004,7 +1014,7 @@ class TestPositions:
         mock_m.post.return_value = [1200.5, 48000.0]
         result = ep.get_derivative_position_collateral_limits("tBTCF0:USTF0")
         mock_m.post.assert_called_once_with(
-            "auth/calc/deriv/collateral/limit",
+            "auth/calc/deriv/collateral/limits",
             body={"symbol": "tBTCF0:USTF0"},
         )
         assert isinstance(result, DerivativePositionCollateralLimits)
@@ -1522,3 +1532,302 @@ class TestMovements:
         assert result[0].currency == "USD"
         assert result[0].currency_name == "WIRE"
         assert result[0].fees == -25.0
+
+    def test_get_movements_ids_and_address_filters(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = [
+            _row(
+                22,
+                {
+                    0: "13105603",
+                    1: "XRP",
+                    2: "RIPPLE",
+                    9: "COMPLETED",
+                    16: "rDESTINATION",
+                    17: "123456",
+                },
+            )
+        ]
+        result = ep.get_movements(ids=[13105603], address="rDESTINATION")
+        mock_m.post.assert_called_once_with(
+            "auth/r/movements/hist",
+            body={
+                "start": None,
+                "end": None,
+                "limit": None,
+                "id": [13105603],
+                "address": "rDESTINATION",
+            },
+        )
+        assert result[0].payment_id == "123456"
+        assert result[0].destination_address == "rDESTINATION"
+
+    def test_movement_payment_id_is_last_and_optional(self):
+        # Positional construction from before the field existed still works.
+        movement = Movement(
+            "1", "BTC", "BITCOIN", 0, 0, "COMPLETED", 1, 0, "a", "tx", None
+        )
+        assert movement.payment_id is None
+        assert [f.name for f in dataclasses.fields(Movement)][-1] == (
+            "payment_id"
+        )
+
+    def test_get_movement_info(self):
+        ep, mock_m = _make_endpoint()
+        # 32 labels — see serializers.MovementInfo.
+        mock_m.post.return_value = _row(
+            32,
+            {
+                0: 24,
+                1: "EUR",
+                2: "WIRE",
+                4: "remark related to bank details",
+                5: 1677086074000,
+                6: 1677086210000,
+                9: "COMPLETED",
+                12: -29.5,
+                13: -0.5,
+                21: "testing note",
+                24: 0,
+                25: 123,
+                28: "abcd-1234",
+                29: "COMPLETED",
+                30: "finished withdrawal in platform",
+                31: {"router": "my-router", "meta": {"foo": "bar"}},
+            },
+        )
+        result = ep.get_movement_info(24)
+        mock_m.post.assert_called_once_with(
+            "auth/r/movements/info", body={"id": 24}
+        )
+        assert isinstance(result, MovementInfo)
+        assert result.id == 24
+        assert result.currency_method == "WIRE"
+        assert result.remark == "remark related to bank details"
+        assert result.mts_start == 1677086074000
+        assert result.amount == -29.5
+        assert result.fees == -0.5
+        assert result.movement_note == "testing note"
+        assert result.bank_router_id == 123
+        assert result.external_bank_mov_id == "abcd-1234"
+        assert result.external_bank_acc_info == {
+            "router": "my-router",
+            "meta": {"foo": "bar"},
+        }
+
+    def test_get_movement_info_without_bank_fields(self):
+        ep, mock_m = _make_endpoint()
+        # A crypto payload ending at MOVEMENT_NOTE still parses.
+        mock_m.post.return_value = _row(
+            22, {0: 25, 1: "BTC", 2: "BITCOIN", 17: "memo-1", 20: "0xabc"}
+        )
+        result = ep.get_movement_info(25)
+        assert result.memo == "memo-1"
+        assert result.transaction_id == "0xabc"
+        assert result.bank_fees is None
+        assert result.external_bank_acc_info is None
+
+
+# Shaped like the documented auth/r/summary example.
+_SUMMARY: list[Any] = [
+    None,
+    None,
+    None,
+    None,
+    [
+        [0.001, 0.001, 0.001, None, None, 0.0002],
+        [0.002, 0.0021, 0.0022, None, None, 0.0065],
+    ],
+    [
+        [
+            {"curr": "BTC", "vol": 0.765},
+            {"curr": "Total (USD)", "vol": 52069.01928633},
+        ],
+        {"USD": 38.95555663, "BTC": 0.0005152},
+        51.12300602,
+    ],
+    [None, {"USD": 21.87, "BTC": 0.04}, 82.1078],
+    None,
+    None,
+    {"leo_lev": 1, "leo_amount_avg": 250.5},
+]
+
+
+# The doc's example reply, as JSON text, so it goes through the real decoder.
+_SUMMARY_WIRE = """[null, null, null, null,
+ [[0.001, 0.001, 0.001, null, null, 0.0002],
+  [0.002, 0.0021, 0.0022, null, null, 0.0065]],
+ [[{"curr": "Total (USD)", "vol": 52069.01928633, "vol_BFX": 1000.5}],
+  {"USTF0": 0.17569482, "USD": 38.95555663, "BTC": 0.0005152},
+  51.12300602],
+ [null, {"USD": 21.87, "BTC": 0.04}, 82.1078],
+ null, null,
+ {"leo_lev": 1, "leo_amount_avg": 250.5}]"""
+
+
+def _wire(body: str) -> requests.Response:
+    result = requests.Response()
+    result.status_code = 200
+    result._content = body.encode()
+    result.encoding = "utf-8"
+    return result
+
+
+class TestAccountSummaryWire:
+    def test_currency_keys_survive_the_decoder(self):
+        with patch("requests.post", return_value=_wire(_SUMMARY_WIRE)):
+            result = Client("k", "s").rest.auth.get_account_summary()
+        assert result.fees_trading_30d == {
+            "USTF0": 0.17569482,
+            "USD": 38.95555663,
+            "BTC": 0.0005152,
+        }
+        assert result.funding_earnings_30d == {"USD": 21.87, "BTC": 0.04}
+        assert result.trade_vol_30d == [
+            {"curr": "Total (USD)", "vol": 52069.01928633, "vol_BFX": 1000.5}
+        ]
+        assert result.leo_lev == 1
+        assert result.leo_amount_avg == 250.5
+
+    def test_decimal_mode_converts_the_per_currency_maps(self):
+        client = Client("k", "s", decimal_mode=True)
+        with patch("requests.post", return_value=_wire(_SUMMARY_WIRE)):
+            result = client.rest.auth.get_account_summary()
+        assert result.fees_trading_30d is not None
+        assert result.fees_trading_30d["USD"] == Decimal("38.95555663")
+        assert result.funding_earnings_30d == {
+            "USD": Decimal("21.87"),
+            "BTC": Decimal("0.04"),
+        }
+        assert result.trade_vol_30d is not None
+        assert result.trade_vol_30d[0]["vol_BFX"] == Decimal("1000.5")
+        assert result.trade_vol_30d[0]["curr"] == "Total (USD)"
+        # The flat total is Decimal too, so the two add up.
+        assert isinstance(result.fees_trading_total_30d, Decimal)
+
+    def test_lossless_mode_keeps_source_text_in_the_maps(self):
+        client = Client("k", "s", lossless_financial_decode=True)
+        with patch("requests.post", return_value=_wire(_SUMMARY_WIRE)):
+            result = client.rest.auth.get_account_summary()
+        assert result.fees_trading_30d is not None
+        assert result.fees_trading_30d["USD"].source_token == "38.95555663"
+        assert result.funding_earnings_30d is not None
+        assert result.funding_earnings_30d["BTC"].source_token == "0.04"
+
+    def test_middleware_snake_cases_keys_unless_raw_keys(self):
+        m = Middleware("https://api.example.com")
+        body = '[{"USD": 1, "vol_BFX": 2, "leoLev": 3}]'
+        with patch("requests.post", return_value=_wire(body)):
+            assert m.post("calc/x") == [
+                {"u_s_d": 1, "vol__b_f_x": 2, "leo_lev": 3}
+            ]
+        with patch("requests.post", return_value=_wire(body)):
+            assert m.post("calc/x", raw_keys=True) == [
+                {"USD": 1, "vol_BFX": 2, "leoLev": 3}
+            ]
+
+
+class TestAccountReads:
+    def test_get_account_summary(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = _SUMMARY
+        result = ep.get_account_summary()
+        mock_m.post.assert_called_once_with("auth/r/summary", raw_keys=True)
+        assert isinstance(result, AccountSummary)
+        assert result.maker_fee == 0.001
+        assert result.deriv_rebate == 0.0002
+        assert result.taker_fee_to_crypto == 0.002
+        assert result.taker_fee_to_stable == 0.0021
+        assert result.taker_fee_to_fiat == 0.0022
+        assert result.deriv_taker_fee == 0.0065
+        assert result.trade_vol_30d is not None
+        assert result.trade_vol_30d[1]["curr"] == "Total (USD)"
+        assert result.fees_trading_30d == {
+            "USD": 38.95555663,
+            "BTC": 0.0005152,
+        }
+        assert result.fees_trading_total_30d == 51.12300602
+        assert result.funding_earnings_30d == {"USD": 21.87, "BTC": 0.04}
+        assert result.funding_earnings_total_30d == 82.1078
+        assert result.leo_lev == 1
+        assert result.leo_amount_avg == 250.5
+
+    def test_get_account_summary_missing_sections_are_none(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = [None, None, None, None, None]
+        result = ep.get_account_summary()
+        assert result.maker_fee is None
+        assert result.trade_vol_30d is None
+        assert result.funding_earnings_total_30d is None
+        assert result.leo_lev is None
+        assert result.leo_amount_avg is None
+
+    def test_get_key_permissions(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = [
+            ["account", 1, 0],
+            ["withdraw", 0, 1],
+        ]
+        result = ep.get_key_permissions()
+        mock_m.post.assert_called_once_with("auth/r/permissions")
+        assert len(result) == 2
+        assert isinstance(result[0], KeyPermission)
+        assert result[0].scope == "account"
+        assert result[0].read == 1
+        assert result[0].write == 0
+        assert result[1].scope == "withdraw"
+        assert result[1].write == 1
+
+    def test_get_audit_history(self):
+        ep, mock_m = _make_endpoint()
+        # 7 labels — see serializers.AuditHistory.
+        mock_m.post.return_value = [
+            [
+                1574332100000,
+                None,
+                "settings: api key created",
+                None,
+                None,
+                "182.64.34.9",
+                "Mozilla/5.0",
+            ]
+        ]
+        result = ep.get_audit_history(
+            start="1574332000000", end="1574332200000", limit=10
+        )
+        mock_m.post.assert_called_once_with(
+            "auth/r/audit/hist",
+            body={
+                "start": "1574332000000",
+                "end": "1574332200000",
+                "limit": 10,
+            },
+        )
+        assert isinstance(result[0], AuditHistory)
+        assert result[0].mts_create == 1574332100000
+        assert result[0].log == "settings: api key created"
+        assert result[0].ip == "182.64.34.9"
+        assert result[0].user_agent == "Mozilla/5.0"
+
+    def test_get_audit_history_defaults(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = []
+        assert ep.get_audit_history() == []
+        mock_m.post.assert_called_once_with(
+            "auth/r/audit/hist",
+            body={"start": None, "end": None, "limit": None},
+        )
+
+    def test_get_alerts(self):
+        ep, mock_m = _make_endpoint()
+        mock_m.post.return_value = [
+            ["price:tETHUSD:220", "price", "tETHUSD", 220, 100]
+        ]
+        result = ep.get_alerts()
+        mock_m.post.assert_called_once_with("auth/r/alerts")
+        assert isinstance(result[0], Alert)
+        assert result[0].info == "price:tETHUSD:220"
+        assert result[0].type == "price"
+        assert result[0].pair == "tETHUSD"
+        assert result[0].price == 220
+        assert result[0].countdown == 100

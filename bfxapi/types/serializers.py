@@ -57,6 +57,11 @@ __serializers__ = [
     "PositionAudit",
     "DerivativePositionCollateral",
     "DerivativePositionCollateralLimits",
+    "MovementInfo",
+    "AccountSummary",
+    "KeyPermission",
+    "AuditHistory",
+    "Alert",
 ]
 
 # region Serializer definitions for types of public use
@@ -716,12 +721,54 @@ Movement = generate_labeler_serializer(
         "_PLACEHOLDER",
         "_PLACEHOLDER",
         "destination_address",
-        "_PLACEHOLDER",
+        "payment_id",
         "_PLACEHOLDER",
         "_PLACEHOLDER",
         "transaction_id",
         "withdraw_transaction_note",
     ],
+)
+
+# The bank fields (indexes 22-31) only matter for wire movements; a shorter
+# crypto payload that stops at MOVEMENT_NOTE still parses, with None there.
+MovementInfo = generate_labeler_serializer(
+    name="MovementInfo",
+    klass=dataclasses.MovementInfo,
+    labels=[
+        "id",
+        "currency",
+        "currency_method",
+        "_PLACEHOLDER",
+        "remark",
+        "mts_start",
+        "mts_update",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "status",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "amount",
+        "fees",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "destination_address",
+        "memo",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "transaction_id",
+        "movement_note",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "bank_fees",
+        "bank_router_id",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "external_bank_mov_id",
+        "external_bank_mov_status",
+        "external_bank_mov_description",
+        "external_bank_acc_info",
+    ],
+    optional_tail=10,
 )
 
 SymbolMarginInfo = generate_labeler_serializer(
@@ -896,6 +943,55 @@ BalanceInfo = generate_labeler_serializer(
     name="BalanceInfo",
     klass=dataclasses.BalanceInfo,
     labels=["aum", "aum_net"],
+)
+
+# auth/r/summary is nested ([4][0], [4][1], [5], [6], [9]); the endpoint
+# picks those slots into this flat order before parsing, so decimal mode
+# still applies to the monetary labels.
+AccountSummary = generate_labeler_serializer(
+    name="AccountSummary",
+    klass=dataclasses.AccountSummary,
+    labels=[
+        "maker_fee",
+        "deriv_rebate",
+        "taker_fee_to_crypto",
+        "taker_fee_to_stable",
+        "taker_fee_to_fiat",
+        "deriv_taker_fee",
+        "trade_vol_30d",
+        "fees_trading_30d",
+        "fees_trading_total_30d",
+        "funding_earnings_30d",
+        "funding_earnings_total_30d",
+        "leo_lev",
+        "leo_amount_avg",
+    ],
+)
+
+KeyPermission = generate_labeler_serializer(
+    name="KeyPermission",
+    klass=dataclasses.KeyPermission,
+    labels=["scope", "read", "write"],
+)
+
+AuditHistory = generate_labeler_serializer(
+    name="AuditHistory",
+    klass=dataclasses.AuditHistory,
+    labels=[
+        "mts_create",
+        "_PLACEHOLDER",
+        "log",
+        "_PLACEHOLDER",
+        "_PLACEHOLDER",
+        "ip",
+        "user_agent",
+    ],
+)
+
+Alert = generate_labeler_serializer(
+    name="Alert",
+    klass=dataclasses.Alert,
+    labels=["info", "type", "pair", "price", "countdown"],
 )
 
 # endregion

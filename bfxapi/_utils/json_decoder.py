@@ -18,3 +18,16 @@ class JSONDecoder(json.JSONDecoder):
         # rejects on Python 3.9+ (confirmed failure on 3.12).
         kwargs.pop("encoding", None)
         super().__init__(*args, **kwargs, object_hook=_object_hook)
+
+
+class _RawKeysJSONDecoder(json.JSONDecoder):
+    """JSONDecoder that keeps object keys as sent.
+
+    For replies keyed by data rather than by field name (currency codes such
+    as ``"USD"``, or ``"vol_BFX"``), which snake-casing would turn into
+    ``"u_s_d"`` and ``"vol__b_f_x"``.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.pop("encoding", None)  # see JSONDecoder
+        super().__init__(*args, **kwargs)
