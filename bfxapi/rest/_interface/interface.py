@@ -39,12 +39,14 @@ class Interface:
         *,
         lossless_financial_decode: bool = False,
         decimal_mode: bool | None = None,
+        nonce_provider: Callable[[], int] | None = None,
     ):
         self._m = Middleware(
             host,
             api_key,
             api_secret,
             lossless_financial_decode=lossless_financial_decode,
+            nonce_provider=nonce_provider,
         )
         # None: no scope of its own (a bare endpoint group built outside a
         # Client follows the process-wide default, as before).

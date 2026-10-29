@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 import json
-import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import (
@@ -14,6 +13,7 @@ from typing import (
 
 from websockets.asyncio.client import ClientConnection
 
+from bfxapi._utils.nonce import resolve_nonce
 from bfxapi.websocket.exceptions import (
     ActionRequiresAuthentication,
     ConnectionNotOpen,
@@ -96,7 +96,15 @@ class Connection(ABC):
         api_secret: str,
         filters: list[str] | None = None,
         dms: int | None = None,
+        *,
+        nonce_provider: Callable[[], int] | None = None,
     ) -> str:
+        """The `auth` frame, signed with a nonce from ``nonce_provider``, or
+        from the process-wide generator the REST middleware shares when it
+        is None. A bad provider raises NonceProviderError before signing."""
+        # First: a NonceProviderError leaves before anything is signed.
+        nonce = resolve_nonce(nonce_provider)
+
         message: dict[str, Any] = {
             "event": "auth",
             "filter": filters,
@@ -108,7 +116,7 @@ class Connection(ABC):
         if dms is not None:
             message["dms"] = dms
 
-        message["authNonce"] = time.time_ns() // 1_000
+        message["authNonce"] = nonce
 
         message["authPayload"] = f"AUTH{message['authNonce']}"
 

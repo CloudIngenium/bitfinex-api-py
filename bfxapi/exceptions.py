@@ -22,3 +22,22 @@ class IncompleteCredentialError(BfxBaseException):
 
 class InvalidCredentialError(BfxBaseException):
     pass
+
+
+class NonceProviderError(InvalidCredentialError, ValueError):
+    """The ``nonce_provider`` raised, or returned something that is not a
+    positive int (a bool is not one).
+
+    Raised before the REST request or the WebSocket auth message is signed,
+    so nothing reached Bitfinex: it is never `retryable` and its outcome is
+    never unknown. The provider's own exception, if any, is the
+    ``__cause__``.
+
+    Two bases. It is an `InvalidCredentialError`, which REST and WebSocket
+    callers already catch when the key cannot sign or authenticate, and
+    which the REST retry helpers never retry. It is also a `ValueError`:
+    the provider produced a value that cannot be used.
+    """
+
+    retryable: bool = False
+    outcome_unknown: bool = False

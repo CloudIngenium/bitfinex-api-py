@@ -62,6 +62,25 @@ bfx = Client(
 )
 ```
 
+### Nonces: one signer per key, or one shared nonce source
+
+Bitfinex keeps one nonce counter per API key and rejects any request whose nonce is not greater than the last one it accepted (error `10114`, raised as `bfxapi.rest.exceptions.NonceError`).
+The client's REST requests and its WebSocket authentication share one process-wide monotonic nonce generator, so they never collide with each other.
+Anything else that signs with the same key (your own REST or WebSocket code, another `Client` in another process) has its own counter and can collide with them.
+
+Either use **one API key per process**, or inject **one shared, monotonic, thread-safe `nonce_provider`** into every component that signs with that key:
+
+```python
+bfx = Client(
+    [...],
+    api_key=os.getenv("BFX_API_KEY"),
+    api_secret=os.getenv("BFX_API_SECRET"),
+    nonce_provider=shared_nonce_source,  # () -> int, strictly increasing
+)
+```
+
+If the provider raises or returns anything but a positive `int`, the call fails with `bfxapi.exceptions.NonceProviderError` before anything is signed or sent.
+
 ### Warning
 
 Remember to not share your API-KEYs and API-SECRETs with anyone. \

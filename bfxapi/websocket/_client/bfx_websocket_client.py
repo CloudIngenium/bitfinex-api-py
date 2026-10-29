@@ -140,8 +140,11 @@ class BfxWebSocketClient(Connection):
         logger: Logger = _DEFAULT_LOGGER,
         lossless_financial_decode: bool = False,
         decimal_mode: bool | None = None,
+        nonce_provider: Callable[[], int] | None = None,
     ) -> None:
         super().__init__(host)
+        # None: the process-wide generator the REST middleware shares.
+        self.__nonce_provider = nonce_provider
         self.__lossless_financial_decode = lossless_financial_decode
         self.__decimal_mode = decimal_mode
         self.__decode_options = financial_decode_options(
@@ -643,7 +646,7 @@ class BfxWebSocketClient(Connection):
 
             if self.__credentials:
                 authentication = Connection._get_authentication_message(
-                    **self.__credentials
+                    **self.__credentials, nonce_provider=self.__nonce_provider
                 )
 
                 await self._websocket.send(authentication)
