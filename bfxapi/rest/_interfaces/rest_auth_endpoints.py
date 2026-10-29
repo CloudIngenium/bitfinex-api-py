@@ -42,6 +42,7 @@ from bfxapi.types import (
     Withdrawal,
     serializers,
 )
+from bfxapi.types.labeler import decimal_mode_enabled
 from bfxapi.types.notification import _Notification
 
 
@@ -52,6 +53,23 @@ def _slot(data: Any, *path: int) -> Any:
             return None
         data = data[index]
     return data
+
+
+def _money(value: Any) -> Any:
+    """Numbers nested in dicts and lists as Decimal when decimal mode is on.
+
+    The serializer converts top-level MONETARY_FIELDS only; this covers the
+    per-currency maps, so they add up with the Decimal totals.
+    """
+    if not decimal_mode_enabled():
+        return value
+    if isinstance(value, dict):
+        return {key: _money(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_money(item) for item in value]
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return Decimal(str(value))
+    return value
 
 
 class RestAuthEndpoints(Interface):
@@ -79,7 +97,9 @@ class RestAuthEndpoints(Interface):
 
         A section missing from the response comes back as None.
         """
-        data = self._m.post("auth/r/summary")
+        # Keys as sent: the volume and fee maps are keyed by currency code
+        # ("USD", "vol_BFX"), which snake-casing would mangle.
+        data = self._m.post("auth/r/summary", raw_keys=True)
 
         leo = _slot(data, 9)
         if not isinstance(leo, dict):
@@ -92,10 +112,10 @@ class RestAuthEndpoints(Interface):
             _slot(data, 4, 1, 1),
             _slot(data, 4, 1, 2),
             _slot(data, 4, 1, 5),
-            _slot(data, 5, 0),
-            _slot(data, 5, 1),
+            _money(_slot(data, 5, 0)),
+            _money(_slot(data, 5, 1)),
             _slot(data, 5, 2),
-            _slot(data, 6, 1),
+            _money(_slot(data, 6, 1)),
             _slot(data, 6, 2),
             leo.get("leo_lev"),
             leo.get("leo_amount_avg"),
