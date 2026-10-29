@@ -16,7 +16,7 @@ from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_decoder import JSONDecoder
-from bfxapi._utils.json_encoder import _FiniteJSONEncoder
+from bfxapi._utils.json_encoder import _FiniteJSONEncoder, _NonFiniteNumber
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.rest.exceptions import (
     ApiRateLimitError,
@@ -25,6 +25,7 @@ from bfxapi.rest.exceptions import (
     InvalidResponseError,
     NetworkError,
     NonceError,
+    NonFiniteNumberError,
     RateLimitError,
     RequestParameterError,
     UnexpectedApiError,
@@ -32,6 +33,21 @@ from bfxapi.rest.exceptions import (
 
 if TYPE_CHECKING:
     from requests.sessions import _Params
+
+
+def _encode_body(body: Any | None) -> str | None:
+    """A REST JSON body, or None for an empty one.
+
+    Raises NonFiniteNumberError (a RequestParameterError and a ValueError)
+    for a NaN or infinity anywhere in it, before the request is signed.
+    """
+    if not body:
+        return None
+    try:
+        return json.dumps(body, cls=_FiniteJSONEncoder)
+    except _NonFiniteNumber as e:
+        raise NonFiniteNumberError(str(e), value=e.value) from e
+
 
 _NONCE_LOCK = threading.Lock()
 _NONCE_LAST = 0
@@ -239,7 +255,7 @@ class Middleware:
         body: Any | None = None,
         params: "_Params | None" = None,
     ) -> Any:
-        _body = body and json.dumps(body, cls=_FiniteJSONEncoder) or None
+        _body = _encode_body(body)
         write = _is_write("POST", endpoint)
 
         headers = {

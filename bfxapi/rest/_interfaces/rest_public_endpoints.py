@@ -1,8 +1,9 @@
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from bfxapi._utils.json_encoder import _plain_decimal
+from bfxapi._utils.json_encoder import _NonFiniteNumber, _plain_decimal
 from bfxapi.rest._interface import Interface
+from bfxapi.rest.exceptions import NonFiniteNumberError
 from bfxapi.types import (
     Candle,
     DerivativesStatus,
@@ -62,14 +63,18 @@ def _query_value(value: str | int | float | Decimal) -> str:
     # str() would send 0.00001 as "1e-05"; floats and Decimals go out as
     # plain decimals instead. Strings, ints and bools keep their str().
     if isinstance(value, float | Decimal):
-        return _plain_decimal(value)
+        try:
+            return _plain_decimal(value)
+        except _NonFiniteNumber as e:
+            raise NonFiniteNumberError(str(e), value=e.value) from e
     return str(value)
 
 
 def _query(**values: str | int | float | Decimal | None) -> dict[str, str]:
     """Query-string params: None dropped, numbers sent as plain decimals.
 
-    Raises ValueError for a NaN or infinite float/Decimal, before any request.
+    Raises NonFiniteNumberError (a RequestParameterError and a ValueError)
+    for a NaN or infinite float/Decimal, before any request.
     """
     return {
         key: _query_value(value)
