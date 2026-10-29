@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import uuid
 from typing import Any, cast
 
@@ -44,11 +45,13 @@ class BfxWebSocketBucket(Connection):
 
     # Read by the client's bucket supervisor. `_closing` tells a close the
     # client asked for from one the server forced; `_connections` grows on
-    # every socket that opened, so a restart that got through resets the
-    # supervisor's backoff.
+    # every socket that opened, and `_opened_at` says when the last one did,
+    # so only a restart that then STAYED up resets the supervisor's backoff.
     _closing: bool = False
 
     _connections: int = 0
+
+    _opened_at: float = 0.0
 
     def __init__(
         self,
@@ -105,10 +108,14 @@ class BfxWebSocketBucket(Connection):
 
             self._connections += 1
 
+            self._opened_at = time.monotonic()
+
             await self.__recover_state()
 
+            # Every waiter: the client's readiness wait and any subscribe()
+            # waiting for this bucket can be waiting at once.
             async with self.__condition:
-                self.__condition.notify(1)
+                self.__condition.notify_all()
 
             async for _message in self._websocket:
                 message = json.loads(
@@ -268,6 +275,11 @@ class BfxWebSocketBucket(Connection):
             subscription["sub_id"] == sub_id
             for subscription in self.__subscriptions.values()
         )
+
+    def _uptime(self) -> float:
+        """Seconds since the last socket opened (or, once it is gone, until
+        now): what the supervisor reads right after it dropped."""
+        return time.monotonic() - self._opened_at
 
     async def wait(self) -> None:
         async with self.__condition:
