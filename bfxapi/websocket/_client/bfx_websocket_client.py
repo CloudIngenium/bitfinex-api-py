@@ -82,8 +82,9 @@ _BUCKET_READY_TIMEOUT = 15.0
 _STABLE_CONNECTION_TIME = 30.0
 
 # Fast, deterministic failures (an unexpected exception, a refusal the server
-# means) after which a bucket supervisor gives up and says so on "error". A
-# network drop never counts: a reconnect is the cure for those. The bucket
+# means), counted since the bucket's last stable connection, after which its
+# supervisor gives up and says so on "error". A network drop never counts
+# (a reconnect is the cure for those) and never resets the count. The bucket
 # gets a fresh supervisor when the client itself reconnects.
 _BUCKET_RESTART_LIMIT = 5
 
@@ -231,6 +232,16 @@ class BfxWebSocketClient(Connection):
             self.__event_emitter.emit("error", error)
 
             raise
+        finally:
+            # However the run ended (an exception __run does not handle, a
+            # cancelled task), no supervisor may outlive it: a later start()
+            # would otherwise put a second one on the same bucket. Not
+            # awaited, since this task may itself be cancelling.
+            for bucket, task in list(self.__buckets.items()):
+                if task is not None and task is not asyncio.current_task():
+                    self.__buckets[bucket] = None
+
+                    task.cancel()
 
     async def __run(self) -> None:
         _delay = _Delay(backoff_factor=1.618)
@@ -504,7 +515,8 @@ class BfxWebSocketClient(Connection):
     ) -> None:
         """End a supervisor that keeps failing, loudly, instead of looping."""
         error = BucketRestartLimitError(
-            f"A subscription bucket failed {failures} times in a row "
+            f"A subscription bucket failed {failures} times without a "
+            "stable connection "
             f"({type(failure).__name__}: {failure}): its supervisor stopped. "
             "Its subscriptions are down until the client reconnects."
         )
@@ -685,7 +697,7 @@ class BfxWebSocketClient(Connection):
                 ):
                     self.__handler.handle(message[1], message[2])
 
-    async def __new_bucket(self) -> BfxWebSocketBucket:
+    async def __new_bucket(self, timeout: float) -> BfxWebSocketBucket:
         bucket = BfxWebSocketBucket(
             self._host,
             self.__event_emitter,
@@ -697,7 +709,17 @@ class BfxWebSocketClient(Connection):
 
         # Bounded, and close() ends it: a bucket that never opens must not
         # hang the subscribe() that asked for it.
-        await self.__wait_any([bucket], _BUCKET_READY_TIMEOUT)
+        try:
+            await self.__wait_any([bucket], timeout)
+        except asyncio.CancelledError:
+            # The caller gave up (wait_for, a cancelled task): the empty
+            # bucket goes with it. Synchronous: this task is cancelling.
+            bucket._closing = True
+
+            if (task := self.__buckets.pop(bucket, None)) is not None:
+                task.cancel()
+
+            raise
 
         if bucket.open and not self.__closing:
             return bucket
@@ -714,7 +736,7 @@ class BfxWebSocketClient(Connection):
             "The client closed while a subscription bucket was opening."
             if self.__closing
             else "A new subscription bucket did not open within "
-            f"{_BUCKET_READY_TIMEOUT}s."
+            f"{_BUCKET_READY_TIMEOUT}s of subscribe()."
         )
 
     def __coming_back(self) -> list[BfxWebSocketBucket]:
@@ -767,7 +789,8 @@ class BfxWebSocketClient(Connection):
                     return await bucket.subscribe(channel, sub_id, **kwargs)
 
             if not (coming_back := self.__coming_back()):
-                await self.__new_bucket()
+                # One bound for the whole call, not one per bucket.
+                await self.__new_bucket(max(deadline - loop.time(), 0.0))
 
                 continue
 

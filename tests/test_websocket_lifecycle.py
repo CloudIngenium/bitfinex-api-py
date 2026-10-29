@@ -537,3 +537,39 @@ class TestStartErrorsAreSurfaced:
         await asyncio.wait_for(running, 1)
 
         assert _events(captured, "error") == []
+
+
+class TestNothingOutlivesItsCaller:
+    async def test_a_failed_start_stops_its_supervisors(self, monkeypatch):
+        client, _ = _client()
+        supervisor = asyncio.create_task(asyncio.Event().wait())
+        bucket = _down_bucket(client)
+        _buckets(client)[bucket] = supervisor
+
+        async def _connect(_self=None):
+            raise InvalidCredentialError("bad key")
+
+        monkeypatch.setattr(
+            client, "_BfxWebSocketClient__connect", _connect, raising=False
+        )
+
+        with pytest.raises(InvalidCredentialError):
+            await client.start()
+        await asyncio.sleep(0)
+
+        assert supervisor.cancelled()
+        assert _buckets(client)[bucket] is None
+
+    async def test_a_cancelled_subscribe_drops_its_empty_bucket(
+        self, monkeypatch
+    ):
+        _plan(monkeypatch, _Gated(FakeWebSocket(), asyncio.Event()))
+        client, _ = _client()
+        client._websocket = FakeWebSocket()
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                client.subscribe("ticker", sub_id="t1"), 0.05
+            )
+
+        assert _buckets(client) == {}
