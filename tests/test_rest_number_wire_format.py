@@ -2,7 +2,9 @@
 
 ``str(0.00001)`` is ``"1e-05"``, which Bitfinex does not read as a number.
 Query params and JSON bodies must send floats and Decimals as plain decimal
-strings, and a NaN or infinity must fail before any request goes out.
+strings, and a NaN or infinity must fail before any request goes out, as a
+NonFiniteNumberError that existing ``except ValueError`` and ``except
+RequestParameterError`` / ``BfxApiError`` clauses both still catch.
 """
 
 import json
@@ -14,13 +16,40 @@ import pytest
 from bfxapi._utils.json_encoder import (
     JSONEncoder,
     _FiniteJSONEncoder,
+    _NonFiniteNumber,
     _plain_decimal,
 )
+from bfxapi.exceptions import BfxBaseException
 from bfxapi.rest._interface.middleware import Middleware
 from bfxapi.rest._interfaces.rest_public_endpoints import (
     RestPublicEndpoints,
     _query,
 )
+from bfxapi.rest.exceptions import (
+    BfxApiError,
+    NonFiniteNumberError,
+    RequestParameterError,
+)
+from bfxapi.rest.retry import is_retryable
+
+
+def _assert_non_finite_error(error: BaseException, value: object) -> None:
+    # Callers catch any of these today; the new type must stay inside all.
+    assert type(error) is NonFiniteNumberError
+    assert isinstance(error, ValueError)
+    assert isinstance(error, RequestParameterError)
+    assert isinstance(error, BfxApiError)
+    assert isinstance(error, BfxBaseException)
+    assert "finite" in str(error)
+    # Nothing was sent: no server code, no status, never retried.
+    assert error.raw is value
+    assert error.code is None
+    assert error.status_code is None
+    assert error.retryable is False
+    assert error.outcome_unknown is False
+    assert is_retryable(error, idempotent=True) is False
+    assert isinstance(error.__cause__, _NonFiniteNumber)
+
 
 _NON_FINITE = [
     float("nan"),
@@ -102,8 +131,12 @@ class TestPlainDecimal:
 
     @pytest.mark.parametrize("value", _NON_FINITE)
     def test_non_finite_raises_value_error(self, value):
-        with pytest.raises(ValueError, match="finite"):
+        # The internal helper raises the _utils marker; the REST callers
+        # turn it into NonFiniteNumberError (tested below).
+        with pytest.raises(_NonFiniteNumber, match="finite") as caught:
             _plain_decimal(value)
+        assert isinstance(caught.value, ValueError)
+        assert caught.value.value is value
 
 
 class TestQuery:
@@ -128,8 +161,9 @@ class TestQuery:
 
     @pytest.mark.parametrize("value", _NON_FINITE)
     def test_non_finite_raises(self, value):
-        with pytest.raises(ValueError):
+        with pytest.raises(NonFiniteNumberError) as caught:
             _query(amount=value)
+        _assert_non_finite_error(caught.value, value)
 
 
 class TestAveragePriceEndpoints:
@@ -172,9 +206,26 @@ class TestAveragePriceEndpoints:
     @pytest.mark.parametrize("value", [float("nan"), Decimal("Infinity")])
     def test_non_finite_amount_never_reaches_middleware(self, value):
         ep, mock_m = self._endpoint()
-        with pytest.raises(ValueError):
+        with pytest.raises(NonFiniteNumberError) as caught:
             ep.get_trading_market_average_price("tBTCUSD", value)
+        _assert_non_finite_error(caught.value, value)
         mock_m.post.assert_not_called()
+
+    @pytest.mark.parametrize("value", [float("-inf"), Decimal("sNaN")])
+    def test_non_finite_funding_rate_cap_never_reaches_middleware(self, value):
+        ep, mock_m = self._endpoint()
+        with pytest.raises(NonFiniteNumberError) as caught:
+            ep.get_funding_market_average_price("fUSD", 1, 30, rate_limit=value)
+        _assert_non_finite_error(caught.value, value)
+        mock_m.post.assert_not_called()
+
+    @patch("bfxapi.rest._interface.middleware.requests.post")
+    def test_non_finite_query_never_reaches_network(self, mock_post):
+        # Through the real Middleware: the request is never sent.
+        ep = RestPublicEndpoints("https://api.example.com")
+        with pytest.raises(NonFiniteNumberError):
+            ep.get_trading_market_average_price("tBTCUSD", float("nan"))
+        mock_post.assert_not_called()
 
 
 class TestJsonBody:
@@ -203,24 +254,49 @@ class TestJsonBody:
 
     @pytest.mark.parametrize("value", _NON_FINITE)
     def test_finite_encoder_rejects_nested_non_finite(self, value):
-        with pytest.raises(ValueError):
+        with pytest.raises(_NonFiniteNumber):
             json.dumps({"orders": [{"price": value}]}, cls=_FiniteJSONEncoder)
 
     def test_lenient_encoder_unchanged_for_websocket(self):
         # The WebSocket client still uses JSONEncoder, which never raised.
         assert json.dumps(float("nan"), cls=JSONEncoder) == '"NaN"'
 
+    @pytest.mark.parametrize("value", _NON_FINITE)
     @patch("bfxapi.rest._interface.middleware.requests.post")
-    def test_post_rejects_nan_before_network(self, mock_post):
+    def test_post_rejects_non_finite_before_network(self, mock_post, value):
         m = Middleware(
             "https://api.example.com", api_key="key", api_secret="secret"
         )
-        with pytest.raises(ValueError):
+        with pytest.raises(NonFiniteNumberError) as caught:
             m.post(
                 "auth/w/order/submit",
-                body={"amount": "1", "price": float("nan")},
+                body={"amount": "1", "orders": [{"price": value}]},
             )
+        _assert_non_finite_error(caught.value, value)
         mock_post.assert_not_called()
+
+    @patch("bfxapi.rest._interface.middleware.requests.post")
+    def test_post_non_finite_caught_by_existing_except_clauses(self, mock_post):
+        # The shapes callers already use: a ValueError tuple, and a
+        # BfxApiError / RuntimeError tuple that has no ValueError in it.
+        m = Middleware("https://api.example.com")
+        with pytest.raises(ValueError):
+            m.post("calc/fx", body={"amount": float("inf")})
+        try:
+            m.post("calc/fx", body={"amount": float("inf")})
+        except (BfxApiError, RuntimeError) as e:
+            assert isinstance(e, NonFiniteNumberError)
+        else:
+            pytest.fail("NonFiniteNumberError was not raised")
+        mock_post.assert_not_called()
+
+    @patch("bfxapi.rest._interface.middleware.requests.post")
+    def test_post_empty_body_sends_no_data(self, mock_post):
+        response = MagicMock()
+        response.json.return_value = [1]
+        mock_post.return_value = response
+        Middleware("https://api.example.com").post("calc/fx", body={})
+        assert mock_post.call_args.kwargs["data"] is None
 
     @patch("bfxapi.rest._interface.middleware.requests.post")
     def test_post_body_wire_format(self, mock_post):

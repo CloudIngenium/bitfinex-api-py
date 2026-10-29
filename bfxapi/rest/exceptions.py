@@ -3,7 +3,9 @@
 Compatibility contract: every class added here subclasses the class (or
 builtin) that the same failure raised before, so an existing `except`
 clause keeps catching it. `UnexpectedApiError` is still a `RuntimeError`,
-and `InvalidResponseError` is still a `requests.exceptions.JSONDecodeError`.
+`InvalidResponseError` is still a `requests.exceptions.JSONDecodeError`,
+and `NonFiniteNumberError` is both a `RequestParameterError` and a
+`ValueError`.
 """
 
 from typing import Any
@@ -40,6 +42,30 @@ class BfxApiError(BfxBaseException):
 
 class RequestParameterError(BfxApiError):
     pass
+
+
+class NonFiniteNumberError(RequestParameterError, ValueError):
+    """A REST query param or JSON body held NaN or an infinity.
+
+    Raised before the request is built, so nothing reached Bitfinex: it is
+    never `retryable` and its outcome is never unknown.
+
+    Two bases, both for compatibility. Before NaN and infinities were
+    rejected locally, they went out as ``"NaN"`` / ``"Infinity"`` and a
+    server rejection came back as a `RequestParameterError`; callers that
+    catch that (or `BfxApiError`) keep catching this. The local check first
+    raised a plain `ValueError`, so callers that catch that keep catching
+    this too.
+
+    Attributes:
+        raw: The non-finite value that was rejected.
+    """
+
+    retryable: bool = False
+    outcome_unknown: bool = False
+
+    def __init__(self, message: str, *, value: Any = None) -> None:
+        super().__init__(message, raw=value)
 
 
 class GenericError(BfxApiError):

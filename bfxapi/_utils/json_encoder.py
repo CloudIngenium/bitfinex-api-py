@@ -31,10 +31,23 @@ def _as_decimal(value: float | Decimal) -> Decimal:
     return value
 
 
+class _NonFiniteNumber(ValueError):
+    """NaN or an infinity met by the finite (REST) encoding.
+
+    Internal: the REST layer re-raises it as
+    ``bfxapi.rest.exceptions.NonFiniteNumberError``, which callers see.
+    It lives here because ``_utils`` must not import ``bfxapi.rest``.
+    """
+
+    def __init__(self, value: float | Decimal) -> None:
+        super().__init__(f"Bitfinex accepts finite numbers only, got {value!r}")
+        self.value = value
+
+
 def _require_finite(value: float | Decimal) -> Decimal:
     number = _as_decimal(value)
     if not number.is_finite():
-        raise ValueError(f"Bitfinex accepts finite numbers only, got {value!r}")
+        raise _NonFiniteNumber(value)
     return number
 
 
@@ -43,8 +56,8 @@ def _plain_decimal(value: float | Decimal) -> str:
 
     Fixed-point, never an exponent (``1e-05`` -> ``0.00001``, ``1E+3`` ->
     ``1000``), trailing fractional zeros trimmed (``1.500`` -> ``1.5``) and
-    negative zero sent as ``0``. NaN and infinities raise ValueError, so a
-    bad value fails before the request is built.
+    negative zero sent as ``0``. NaN and infinities raise _NonFiniteNumber
+    (a ValueError), so a bad value fails before the request is built.
     """
     text = format(_require_finite(value), "f")
     if "." in text:
@@ -77,10 +90,11 @@ class JSONEncoder(json.JSONEncoder):
 
 
 class _FiniteJSONEncoder(JSONEncoder):
-    """JSONEncoder that raises ValueError on NaN or an infinity.
+    """JSONEncoder that raises _NonFiniteNumber on NaN or an infinity.
 
     Used for REST bodies so a non-finite number fails before the request is
-    signed and sent. The WebSocket client keeps the lenient JSONEncoder.
+    signed and sent; the middleware re-raises it as NonFiniteNumberError.
+    The WebSocket client keeps the lenient JSONEncoder.
     """
 
     def encode(self, o: _ExtJSON) -> str:
