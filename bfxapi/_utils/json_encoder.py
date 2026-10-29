@@ -22,18 +22,48 @@ def _clear(dictionary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _adapter(data: _ExtJSON) -> _StrictJSON:
+def _as_decimal(value: float | Decimal) -> Decimal:
+    # A float goes through its shortest repr (str == repr for floats), so
+    # 0.1 stays 0.1 instead of Decimal(0.1)'s 55-digit binary expansion.
+    return Decimal(repr(value)) if isinstance(value, float) else value
+
+
+def _require_finite(value: float | Decimal) -> Decimal:
+    number = _as_decimal(value)
+    if not number.is_finite():
+        raise ValueError(f"Bitfinex accepts finite numbers only, got {value!r}")
+    return number
+
+
+def _plain_decimal(value: float | Decimal) -> str:
+    """A float or Decimal as a plain decimal string for the wire.
+
+    Fixed-point, never an exponent (``1e-05`` -> ``0.00001``, ``1E+3`` ->
+    ``1000``), trailing fractional zeros trimmed (``1.500`` -> ``1.5``) and
+    negative zero sent as ``0``. NaN and infinities raise ValueError, so a
+    bad value fails before the request is built.
+    """
+    text = format(_require_finite(value), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+def _adapter(data: _ExtJSON, *, finite: bool = False) -> _StrictJSON:
     if isinstance(data, bool):
         return int(data)
-    if isinstance(data, float):
-        return format(Decimal(repr(data)), "f")
-    if isinstance(data, Decimal):
-        return format(data, "f")
+    if isinstance(data, float | Decimal):
+        # format "f" never emits an exponent. ``finite`` rejects NaN and
+        # infinities, which would otherwise go out as "NaN" / "Infinity".
+        number = _require_finite(data) if finite else _as_decimal(data)
+        return format(number, "f")
 
     if isinstance(data, list):
-        return [_adapter(sub_data) for sub_data in data]
+        return [_adapter(sub_data, finite=finite) for sub_data in data]
     if isinstance(data, dict):
-        return _clear({key: _adapter(value) for key, value in data.items()})
+        return _clear(
+            {key: _adapter(value, finite=finite) for key, value in data.items()}
+        )
 
     return data
 
@@ -41,3 +71,14 @@ def _adapter(data: _ExtJSON) -> _StrictJSON:
 class JSONEncoder(json.JSONEncoder):
     def encode(self, o: _ExtJSON) -> str:
         return super().encode(_adapter(o))
+
+
+class _FiniteJSONEncoder(JSONEncoder):
+    """JSONEncoder that raises ValueError on NaN or an infinity.
+
+    Used for REST bodies so a non-finite number fails before the request is
+    signed and sent. The WebSocket client keeps the lenient JSONEncoder.
+    """
+
+    def encode(self, o: _ExtJSON) -> str:
+        return json.JSONEncoder.encode(self, _adapter(o, finite=True))
