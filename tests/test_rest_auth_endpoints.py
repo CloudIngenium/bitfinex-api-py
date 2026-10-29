@@ -1,7 +1,12 @@
 import dataclasses
+from decimal import Decimal
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import requests
+
+from bfxapi import Client
+from bfxapi.rest._interface.middleware import Middleware
 from bfxapi.rest._interfaces.rest_auth_endpoints import RestAuthEndpoints
 from bfxapi.types import (
     AccountSummary,
@@ -1648,12 +1653,77 @@ _SUMMARY: list[Any] = [
 ]
 
 
+# The doc's example reply, as JSON text, so it goes through the real decoder.
+_SUMMARY_WIRE = """[null, null, null, null,
+ [[0.001, 0.001, 0.001, null, null, 0.0002],
+  [0.002, 0.0021, 0.0022, null, null, 0.0065]],
+ [[{"curr": "Total (USD)", "vol": 52069.01928633, "vol_BFX": 1000.5}],
+  {"USTF0": 0.17569482, "USD": 38.95555663, "BTC": 0.0005152},
+  51.12300602],
+ [null, {"USD": 21.87, "BTC": 0.04}, 82.1078],
+ null, null,
+ {"leo_lev": 1, "leo_amount_avg": 250.5}]"""
+
+
+def _wire(body: str) -> requests.Response:
+    result = requests.Response()
+    result.status_code = 200
+    result._content = body.encode()
+    result.encoding = "utf-8"
+    return result
+
+
+class TestAccountSummaryWire:
+    def test_currency_keys_survive_the_decoder(self):
+        with patch("requests.post", return_value=_wire(_SUMMARY_WIRE)):
+            result = Client("k", "s").rest.auth.get_account_summary()
+        assert result.fees_trading_30d == {
+            "USTF0": 0.17569482,
+            "USD": 38.95555663,
+            "BTC": 0.0005152,
+        }
+        assert result.funding_earnings_30d == {"USD": 21.87, "BTC": 0.04}
+        assert result.trade_vol_30d == [
+            {"curr": "Total (USD)", "vol": 52069.01928633, "vol_BFX": 1000.5}
+        ]
+        assert result.leo_lev == 1
+        assert result.leo_amount_avg == 250.5
+
+    def test_decimal_mode_converts_the_per_currency_maps(self):
+        client = Client("k", "s", decimal_mode=True)
+        with patch("requests.post", return_value=_wire(_SUMMARY_WIRE)):
+            result = client.rest.auth.get_account_summary()
+        assert result.fees_trading_30d is not None
+        assert result.fees_trading_30d["USD"] == Decimal("38.95555663")
+        assert result.funding_earnings_30d == {
+            "USD": Decimal("21.87"),
+            "BTC": Decimal("0.04"),
+        }
+        assert result.trade_vol_30d is not None
+        assert result.trade_vol_30d[0]["vol_BFX"] == Decimal("1000.5")
+        assert result.trade_vol_30d[0]["curr"] == "Total (USD)"
+        # The flat total is Decimal too, so the two add up.
+        assert isinstance(result.fees_trading_total_30d, Decimal)
+
+    def test_middleware_snake_cases_keys_unless_raw_keys(self):
+        m = Middleware("https://api.example.com")
+        body = '[{"USD": 1, "vol_BFX": 2, "leoLev": 3}]'
+        with patch("requests.post", return_value=_wire(body)):
+            assert m.post("calc/x") == [
+                {"u_s_d": 1, "vol__b_f_x": 2, "leo_lev": 3}
+            ]
+        with patch("requests.post", return_value=_wire(body)):
+            assert m.post("calc/x", raw_keys=True) == [
+                {"USD": 1, "vol_BFX": 2, "leoLev": 3}
+            ]
+
+
 class TestAccountReads:
     def test_get_account_summary(self):
         ep, mock_m = _make_endpoint()
         mock_m.post.return_value = _SUMMARY
         result = ep.get_account_summary()
-        mock_m.post.assert_called_once_with("auth/r/summary")
+        mock_m.post.assert_called_once_with("auth/r/summary", raw_keys=True)
         assert isinstance(result, AccountSummary)
         assert result.maker_fee == 0.001
         assert result.deriv_rebate == 0.0002

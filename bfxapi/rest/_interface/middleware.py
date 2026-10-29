@@ -15,7 +15,7 @@ import requests
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from bfxapi._utils.financial_json import financial_decode_options
-from bfxapi._utils.json_decoder import JSONDecoder
+from bfxapi._utils.json_decoder import JSONDecoder, _RawKeysJSONDecoder
 from bfxapi._utils.json_encoder import _FiniteJSONEncoder, _NonFiniteNumber
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.rest.exceptions import (
@@ -254,7 +254,14 @@ class Middleware:
         endpoint: str,
         body: Any | None = None,
         params: "_Params | None" = None,
+        *,
+        raw_keys: bool = False,
     ) -> Any:
+        """POST ``endpoint``; the decoded JSON reply.
+
+        Object keys are snake-cased unless ``raw_keys`` is set, for replies
+        keyed by data (currency codes) rather than by field name.
+        """
         _body = _encode_body(body)
         write = _is_write("POST", endpoint)
 
@@ -284,7 +291,7 @@ class Middleware:
         except requests.RequestException as e:
             raise _wrap_request_exception(e, write) from e
 
-        return self.__process_response(response, write=write)
+        return self.__process_response(response, write=write, raw_keys=raw_keys)
 
     def __rate_limit_delay_ms(self) -> int:
         info = self.last_rate_limit
@@ -297,7 +304,7 @@ class Middleware:
         return max(retry_ms, 1000)
 
     def __process_response(
-        self, response: requests.Response, write: bool
+        self, response: requests.Response, write: bool, raw_keys: bool = False
     ) -> Any:
         self.last_response_at = time.monotonic()
         self.last_rate_limit = RateLimitInfo.from_headers(response.headers)
@@ -314,7 +321,8 @@ class Middleware:
             )
 
         try:
-            data = response.json(cls=JSONDecoder, **self.__decode_options)
+            decoder = _RawKeysJSONDecoder if raw_keys else JSONDecoder
+            data = response.json(cls=decoder, **self.__decode_options)
         except requests.exceptions.JSONDecodeError as e:
             # A 4xx without a JSON body was refused before it was applied;
             # anything else on a write may have been applied.
