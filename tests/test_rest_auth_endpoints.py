@@ -1705,6 +1705,15 @@ class TestAccountSummaryWire:
         # The flat total is Decimal too, so the two add up.
         assert isinstance(result.fees_trading_total_30d, Decimal)
 
+    def test_lossless_mode_keeps_source_text_in_the_maps(self):
+        client = Client("k", "s", lossless_financial_decode=True)
+        with patch("requests.post", return_value=_wire(_SUMMARY_WIRE)):
+            result = client.rest.auth.get_account_summary()
+        assert result.fees_trading_30d is not None
+        assert result.fees_trading_30d["USD"].source_token == "38.95555663"
+        assert result.funding_earnings_30d is not None
+        assert result.funding_earnings_30d["BTC"].source_token == "0.04"
+
     def test_middleware_snake_cases_keys_unless_raw_keys(self):
         m = Middleware("https://api.example.com")
         body = '[{"USD": 1, "vol_BFX": 2, "leoLev": 3}]'
