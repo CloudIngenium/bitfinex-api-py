@@ -125,7 +125,8 @@ class TestCloseClassification:
         """A close handshake that times out also has no received frame.
 
         Treating it as a lost connection would resurrect a client its owner
-        just shut down.
+        just shut down; raising would turn a close the owner asked for into
+        an error. It ends cleanly and says so.
         """
         client, emitted = _drive(monkeypatch, [])
 
@@ -138,8 +139,11 @@ class TestCloseClassification:
             client, "_BfxWebSocketClient__connect", _connect, raising=False
         )
 
-        with pytest.raises(ConnectionClosedError):
-            await client.start()
+        await client.start()
+
+        assert [e for e, _ in emitted if e == "disconnected"] == [
+            "disconnected"
+        ]
 
     async def test_a_server_going_away_reconnects(self, monkeypatch):
         """1001 from the server is an edge restart, not a goodbye."""

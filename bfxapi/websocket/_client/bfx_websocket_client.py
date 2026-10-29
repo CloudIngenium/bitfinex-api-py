@@ -67,6 +67,11 @@ _LOST_CONNECTION_CODES = (1006, 1012)
 
 _GOING_AWAY = 1001
 
+# How long a (re)connected client waits for its subscription buckets before it
+# opens without them. A bucket that never comes back must not starve the main
+# socket: its supervisor keeps retrying in the background.
+_BUCKET_READY_TIMEOUT = 15.0
+
 # HTTP statuses a reconnecting client waits out: a request timeout, rate
 # limiting, and the 5xx family Bitfinex answers with during maintenance.
 _RETRYABLE_STATUSES = frozenset({408, 429})
@@ -141,6 +146,14 @@ class BfxWebSocketClient(Connection):
         # lost connection, even when its handshake times out without a frame.
         self.__closing = False
 
+        # What close() asked for, reported by "disconnected" when the client
+        # ends without a close handshake of its own (between sockets, or a
+        # close that got no frame back).
+        self.__close_frame: tuple[int, str] = (1000, "")
+
+        # Set by close(): wakes a reconnect backoff so it ends at once.
+        self.__close_requested = asyncio.Event()
+
         self.__event_emitter = BfxEventEmitter(loop=None)
 
         self.__handler = AuthEventsHandler(
@@ -171,7 +184,12 @@ class BfxWebSocketClient(Connection):
     async def start(self) -> None:
         _delay = _Delay(backoff_factor=1.618)
 
+        # A new session: whatever an earlier close() shut down may run again.
         self.__closing = False
+        self.__close_requested = asyncio.Event()
+
+        for bucket in self.__buckets:
+            bucket._closing = False
 
         while True:
             if self.__reconnection:
@@ -181,7 +199,16 @@ class BfxWebSocketClient(Connection):
                 if (left := self.__time_left()) is not None:
                     _sleep = min(_sleep, left)
 
-                await asyncio.sleep(_sleep)
+                # close() ends the backoff at once, and an outage with it.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self.__close_requested.wait(), _sleep
+                    )
+
+                if self.__closing:
+                    self.__emit_closed()
+
+                    break
 
                 self.__time_left()
 
@@ -194,6 +221,14 @@ class BfxWebSocketClient(Connection):
                 OSError,
             ) as error:
                 await self.__stop_buckets()
+
+                if self.__closing:
+                    # The owner closed: whatever the socket died of on the
+                    # way out (no close frame, a failed reconnect attempt),
+                    # the client is done, not lost.
+                    self.__emit_closed()
+
+                    break
 
                 if isinstance(
                     error, ConnectionClosedError
@@ -245,6 +280,10 @@ class BfxWebSocketClient(Connection):
 
                 continue
 
+            # A normal exit (a server 1000, or the owner's close) ends the
+            # session: no bucket supervisor may outlive it.
+            await self.__stop_buckets()
+
             close_code = None
             close_reason = ""
             if self._websocket.close_code is not None:
@@ -260,14 +299,15 @@ class BfxWebSocketClient(Connection):
 
             break
 
+    def __emit_closed(self) -> None:
+        self.__event_emitter.emit("disconnected", *self.__close_frame)
+
     def __is_lost_connection(self, error: ConnectionClosedError) -> bool:
         # websockets 16 reports a dead TCP connection (and a keepalive
         # timeout) with no received close frame at all: RFC 6455 forbids
         # sending 1006, so `rcvd is None` IS the lost connection. A close the
-        # client asked for can end the same way, hence `__closing`.
-        if self.__closing:
-            return False
-
+        # client asked for can end the same way: start() checks `__closing`
+        # before it ever asks this.
         return error.rcvd is None or error.rcvd.code in _LOST_CONNECTION_CODES
 
     @staticmethod
@@ -315,13 +355,23 @@ class BfxWebSocketClient(Connection):
 
     async def __stop_buckets(self) -> None:
         async def _cancel(task: Task[None]) -> None:
+            if task is asyncio.current_task():
+                # close() called from inside a supervisor: it ends on its own
+                # once it sees the closing flags.
+                return
+
             task.cancel()
 
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                # Only the supervisor's own cancellation is expected here; one
+                # aimed at the caller must reach it.
+                if (current := asyncio.current_task()) and current.cancelling():
+                    raise
 
-        for bucket in self.__buckets:
-            if task := self.__buckets[bucket]:
+        for bucket in list(self.__buckets):
+            if task := self.__buckets.get(bucket):
                 self.__buckets[bucket] = None
 
                 await _cancel(task)
@@ -347,9 +397,7 @@ class BfxWebSocketClient(Connection):
             except Exception as error:
                 self.__event_emitter.emit("error", error)
 
-            # Removed by unsubscribe, closed on purpose, or the client is
-            # down itself: its own reconnect restarts every bucket.
-            if bucket not in self.__buckets or bucket._closing or not self.open:
+            if self.__bucket_is_done(bucket):
                 return
 
             # A fresh socket must re-announce every subscription it confirms.
@@ -361,6 +409,48 @@ class BfxWebSocketClient(Connection):
                 _delay.reset()
 
             await asyncio.sleep(_delay.next())
+
+            # close() may have arrived while it slept.
+            if self.__bucket_is_done(bucket):
+                return
+
+    def __bucket_is_done(self, bucket: BfxWebSocketBucket) -> bool:
+        # Removed by unsubscribe, closed on purpose (the bucket or the whole
+        # client), or the client is down itself: its own reconnect restarts
+        # every bucket.
+        return (
+            self.__closing
+            or bucket not in self.__buckets
+            or bucket._closing
+            or not self.open
+        )
+
+    async def __buckets_ready(self) -> bool:
+        """Wait, within a bound, for every bucket to come back.
+
+        A bucket that never recovers (a 4xx it means, a bug that recurs) must
+        not hold the main socket's open, auth and read loop hostage: past
+        `_BUCKET_READY_TIMEOUT` the client opens without it while its
+        supervisor keeps retrying. close() ends the wait too.
+        """
+        ready: asyncio.Future[Any] = asyncio.gather(
+            *[bucket.wait() for bucket in self.__buckets]
+        )
+        closed: asyncio.Future[Any] = asyncio.ensure_future(
+            self.__close_requested.wait()
+        )
+
+        try:
+            await asyncio.wait(
+                {ready, closed},
+                timeout=_BUCKET_READY_TIMEOUT,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            return ready.done()
+        finally:
+            ready.cancel()
+            closed.cancel()
 
     async def __connect(self) -> None:
         async with websockets.asyncio.client.connect(self._host) as websocket:
@@ -381,17 +471,30 @@ class BfxWebSocketClient(Connection):
 
             self._websocket = websocket
 
+            if self.__closing:
+                # close() arrived during the handshake.
+                return await websocket.close(*self.__close_frame)
+
             for bucket in self.__buckets:
                 self.__buckets[bucket] = asyncio.create_task(
                     self.__supervise(bucket)
                 )
 
-            if len(self.__buckets) == 0 or (
-                await asyncio.gather(
-                    *[bucket.wait() for bucket in self.__buckets]
-                )
+            if (
+                self.__buckets
+                and not await self.__buckets_ready()
+                and not self.__closing
             ):
-                self.__event_emitter.emit("open")
+                self.__logger.warning(
+                    "A subscription bucket is not back yet: opening without "
+                    "it while it keeps reconnecting."
+                )
+
+            if self.__closing:
+                # close() arrived while the buckets were coming back.
+                return
+
+            self.__event_emitter.emit("open")
 
             if self.__credentials:
                 authentication = Connection._get_authentication_message(
@@ -509,12 +612,21 @@ class BfxWebSocketClient(Connection):
             f"Unable to find a subscription with sub_id <{sub_id}>."
         )
 
-    @Connection._require_websocket_connection
     async def close(self, code: int = 1000, reason: str = "") -> None:
-        self.__closing = True
+        """Shut the client down, in any state.
 
-        for bucket in self.__buckets:
+        Up, mid-outage or mid-handshake alike: `start()` stops reconnecting,
+        ends cleanly and emits "disconnected", and no bucket comes back.
+        """
+        self.__closing = True
+        self.__close_frame = (code, reason)
+        self.__close_requested.set()
+
+        for bucket in list(self.__buckets):
             await bucket.close(code=code, reason=reason)
+
+        # Supervisors asleep in a backoff, or mid-handshake, are stopped too.
+        await self.__stop_buckets()
 
         if self.open:
             await self._websocket.close(code=code, reason=reason)

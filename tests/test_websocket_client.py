@@ -286,9 +286,10 @@ class TestClosedClientRefusesEveryAction:
             lambda c: c.subscribe("ticker", symbol="tBTCUSD"),
             lambda c: c.unsubscribe("abc"),
             lambda c: c.resubscribe("abc"),
-            lambda c: c.close(),
         ],
-        ids=["subscribe", "unsubscribe", "resubscribe", "close"],
+        # close() is the exception: it works in any state (see
+        # tests/test_websocket_shutdown.py).
+        ids=["subscribe", "unsubscribe", "resubscribe"],
     )
     async def test_raises_connection_not_open(self, action):
         client, _ = make_client()
