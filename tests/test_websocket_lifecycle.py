@@ -216,6 +216,34 @@ class TestSubscribePrefersOpenBuckets:
         assert len(_buckets(client)) == 1
         await client.close()
 
+    async def test_a_client_that_drops_meanwhile_ends_the_wait(
+        self, monkeypatch
+    ):
+        """The full 15 s bound applies: the dropped client must end it."""
+        monkeypatch.setattr(_Delay, "next", lambda self: 0.0)
+        bucket0 = FakeWebSocket(confirms=True)
+        calls = _plan(
+            monkeypatch,
+            FakeConnect(bucket0),
+            _Gated(FakeWebSocket(), asyncio.Event()),
+        )
+        client, captured = _client()
+        client._websocket = FakeWebSocket()
+        await client.subscribe("ticker", sub_id="t1")
+        await settle(lambda: _events(captured, "subscribed"))
+        bucket0.fail(ConnectionClosedError(None, None))
+        await settle(lambda: len(calls) == 2)
+
+        pending = asyncio.create_task(client.subscribe("ticker", sub_id="t2"))
+        await asyncio.sleep(0.01)
+        # What start() does when the main socket drops.
+        client._websocket.state = SimpleNamespace(name="CLOSED")
+        await client._BfxWebSocketClient__stop_buckets()
+
+        with pytest.raises(ConnectionNotOpen, match="No open connection"):
+            await asyncio.wait_for(pending, 1)
+        await client.close()
+
     async def test_an_unsupervised_down_bucket_gets_a_new_one(
         self, monkeypatch
     ):

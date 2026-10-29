@@ -558,16 +558,23 @@ class BfxWebSocketClient(Connection):
     async def __wait_any(
         self, buckets: list[BfxWebSocketBucket], timeout: float
     ) -> None:
-        """Wait until one of `buckets` opens, close() is called, or `timeout`.
+        """Wait until one of `buckets` opens, close() is called, one of their
+        supervisors ends (the client dropped, or it gave up), or `timeout`.
 
-        The caller re-reads the state: none of the three is an error here.
+        The caller re-reads the state: none of these is an error here.
         """
         waiters = {asyncio.ensure_future(bucket.wait()) for bucket in buckets}
         closed = asyncio.ensure_future(self.__close_requested.wait())
+        # Watched, never cancelled here: they belong to the client.
+        supervisors = {
+            task
+            for bucket in buckets
+            if (task := self.__buckets.get(bucket)) is not None
+        }
 
         try:
             await asyncio.wait(
-                {*waiters, closed},
+                {*waiters, closed, *supervisors},
                 timeout=max(timeout, 0.0),
                 return_when=asyncio.FIRST_COMPLETED,
             )
