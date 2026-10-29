@@ -24,6 +24,17 @@ _RESTART_CODES: dict[int | None, str] = {
 }
 
 
+def _subscribe_frame(
+    channel: str, sub_id: str | None = None, **kwargs: Any
+) -> dict[str, Any]:
+    return {
+        **kwargs,
+        "event": "subscribe",
+        "channel": channel,
+        "subId": sub_id or str(uuid.uuid4()),
+    }
+
+
 def _strip(message: dict[str, Any], keys: list[str]) -> dict[str, Any]:
     return {key: value for key, value in message.items() if key not in keys}
 
@@ -79,10 +90,18 @@ class BfxWebSocketBucket(Connection):
         ]
 
     async def start(self) -> None:
-        self._closing = False
+        # A bucket closed on purpose stays closed: only its owner (the
+        # client, when it starts a new session) clears `_closing`. Clearing it
+        # here let a supervisor that woke after `close()` bring it back.
+        if self._closing:
+            return
 
         async with websockets.asyncio.client.connect(self._host) as websocket:
             self._websocket = websocket
+
+            if self._closing:
+                # close() arrived during the handshake.
+                return
 
             self._connections += 1
 
@@ -157,13 +176,25 @@ class BfxWebSocketBucket(Connection):
         # when it was recorded, so nothing re-requests it either.
         self.__cancellations.clear()
 
-        for pending in self.__pendings:
-            await self._websocket.send(message=json.dumps(pending))
-
+        # Every confirmed subscription becomes pending BEFORE anything is
+        # sent. The server can hang up mid-recovery (20051, maintenance): a
+        # subscription popped and not yet re-sent was lost for good, while a
+        # pending one is re-sent on the next restart until it is confirmed.
         for chan_id in list(self.__subscriptions.keys()):
-            subscription = self.__subscriptions.pop(chan_id)
+            subscription: dict[str, Any] = dict(
+                self.__subscriptions.pop(chan_id)
+            )
 
-            await self.subscribe(**subscription)
+            self.__pendings.append(
+                _subscribe_frame(
+                    cast(str, subscription.pop("channel")),
+                    cast(str, subscription.pop("sub_id")),
+                    **subscription,
+                )
+            )
+
+        for pending in list(self.__pendings):
+            await self._websocket.send(message=json.dumps(pending))
 
         await self.__set_config([_CHECKSUM_FLAG_VALUE])
 
@@ -176,13 +207,7 @@ class BfxWebSocketBucket(Connection):
     async def subscribe(
         self, channel: str, sub_id: str | None = None, **kwargs: Any
     ) -> None:
-        subscription: dict[str, Any] = {
-            **kwargs,
-            "event": "subscribe",
-            "channel": channel,
-        }
-
-        subscription["subId"] = sub_id or str(uuid.uuid4())
+        subscription = _subscribe_frame(channel, sub_id, **kwargs)
 
         self.__pendings.append(subscription)
 
@@ -220,11 +245,13 @@ class BfxWebSocketBucket(Connection):
 
                 await self.subscribe(**subscription)
 
-    @Connection._require_websocket_connection
     async def close(self, code: int = 1000, reason: str = "") -> None:
+        # Works in any state: a bucket between sockets (its supervisor asleep,
+        # or mid-handshake) must still be told to stay down.
         self._closing = True
 
-        await self._websocket.close(code, reason)
+        if self.open:
+            await self._websocket.close(code, reason)
 
     def has(self, sub_id: str) -> bool:
         # `ids` counts pendings, so a duplicate `subscribe` is refused from the
