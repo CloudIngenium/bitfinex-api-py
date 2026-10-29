@@ -28,10 +28,13 @@ class NonceProviderError(InvalidCredentialError, ValueError):
     """The ``nonce_provider`` raised, or returned something that is not a
     positive int (a bool is not one).
 
-    Raised before the REST request or the WebSocket auth message is signed,
-    so nothing reached Bitfinex: it is never `retryable` and its outcome is
-    never unknown. The provider's own exception, if any, is the
-    ``__cause__``.
+    Raised before the REST request or the WebSocket auth message is signed.
+    On REST, nothing reached Bitfinex. On WebSocket, the socket has already
+    connected and `open` has fired; only the auth frame is held back. It is
+    never `retryable` and its outcome is never unknown. On WebSocket it also
+    ends the client for good: it is not one of the errors the client
+    reconnects on, so `start()` raises it. The provider's own exception, if
+    any, is the ``__cause__``.
 
     Two bases. It is an `InvalidCredentialError`, which REST and WebSocket
     callers already catch when the key cannot sign or authenticate, and

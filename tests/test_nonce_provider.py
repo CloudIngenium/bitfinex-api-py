@@ -25,7 +25,10 @@ from bfxapi.exceptions import (
 )
 from bfxapi.rest._interface.middleware import Middleware, _next_nonce
 from bfxapi.rest.retry import is_retryable
-from bfxapi.websocket._client.bfx_websocket_client import BfxWebSocketClient
+from bfxapi.websocket._client.bfx_websocket_client import (
+    BfxWebSocketClient,
+    _Delay,
+)
 from bfxapi.websocket._connection import Connection
 
 from .conftest import FakeWebSocket
@@ -142,6 +145,108 @@ class TestInjectedProvider:
         msg = _auth_message(nonce_provider=lambda: Weird(6))
         assert msg["authPayload"] == "AUTH6"
 
+    async def test_ws_reconnect_draws_a_new_nonce(
+        self, connect_each, monkeypatch
+    ):
+        # 20051 makes the client reconnect at once; each socket re-auths.
+        monkeypatch.setattr(_Delay, "next", lambda self: 0)
+        auth_ok = json.dumps({"event": "auth", "status": "OK"})
+        frames = [
+            [auth_ok, json.dumps({"event": "info", "code": 20051})],
+            [auth_ok],
+        ]
+        sockets = connect_each(
+            lambda: _fake_socket(incoming=frames.pop(0) if frames else [])
+        )
+        provider = _Counter(3_000)
+        client = BfxWebSocketClient(
+            "wss://example.invalid",
+            credentials=_CREDENTIALS,
+            nonce_provider=provider,
+        )
+
+        await client.start()
+
+        assert len(sockets) == 2, "the client reconnected exactly once"
+        auths = [
+            [f for f in s.events if f.get("event") == "auth"] for s in sockets
+        ]
+        assert [len(a) for a in auths] == [1, 1]
+        assert auths[0][0]["authNonce"] == 3_000
+        assert auths[1][0]["authNonce"] == 3_001
+        assert auths[1][0]["authPayload"] == "AUTH3001"
+        assert provider.calls == 2
+
+
+class _NegativeViaInt(int):
+    """Plain value 7, but its own __int__ claims -1."""
+
+    def __int__(self) -> int:
+        return -1
+
+
+class _AlwaysPositive(int):
+    """A negative value whose own __le__ says it is never <= anything."""
+
+    def __le__(self, other: object) -> bool:
+        return False
+
+
+class _IntRaises(int):
+    """An int subclass whose own __int__ raises."""
+
+    def __int__(self) -> int:
+        raise RuntimeError("no int for you")
+
+
+class TestIntSubclassProvider:
+    """An int subclass is judged by its plain int value, never its overrides."""
+
+    def test_own_int_returning_minus_one_is_bypassed(self):
+        value = _NegativeViaInt(7)
+        assert int(value) == -1  # the override is real
+
+        nonce = nonce_mod.resolve_nonce(lambda: value)
+
+        assert nonce == 7
+        assert type(nonce) is int
+        assert _auth_message(nonce_provider=lambda: value)["authNonce"] == 7
+
+    def test_own_int_cannot_hide_a_negative_value(self):
+        class _PositiveViaInt(int):
+            def __int__(self) -> int:
+                return 5
+
+        with pytest.raises(NonceProviderError, match="positive int"):
+            nonce_mod.resolve_nonce(lambda: _PositiveViaInt(-1))
+
+    @pytest.mark.parametrize("raw", [-1, 0])
+    def test_le_always_false_cannot_pass_a_non_positive_value(self, raw):
+        value = _AlwaysPositive(raw)
+        assert not value <= 0  # the override is real
+
+        m = Middleware("https://x", "k", "s", nonce_provider=lambda: value)
+        with (
+            patch(_POST) as post,
+            pytest.raises(NonceProviderError, match="positive int"),
+        ):
+            m.post("auth/w/order/submit")
+        post.assert_not_called()
+
+        with pytest.raises(NonceProviderError, match="positive int"):
+            _auth_message(nonce_provider=lambda: value)
+
+    def test_own_int_that_raises_is_never_called(self):
+        value = _IntRaises(11)
+        with pytest.raises(RuntimeError):
+            int(value)  # the override is real
+
+        assert nonce_mod.resolve_nonce(lambda: value) == 11
+
+    def test_own_int_that_raises_cannot_pass_a_negative_value(self):
+        with pytest.raises(NonceProviderError, match="positive int"):
+            nonce_mod.resolve_nonce(lambda: _IntRaises(-4))
+
 
 def _fake_socket(**kwargs):
     return FakeWebSocket(**kwargs)
@@ -197,9 +302,11 @@ class TestDefaultSharedGenerator:
         m = Middleware("https://x", "k", "s")
         seen: list[int] = []
         seen_lock = threading.Lock()
-        start = threading.Barrier(8)
+        start = threading.Barrier(8, timeout=30)
 
         captured: list[str] = []
+        # A failed assert inside a thread never reaches pytest on its own.
+        failures: list[BaseException] = []
 
         def _post(**kwargs):
             with seen_lock:
@@ -218,9 +325,19 @@ class TestDefaultSharedGenerator:
             with seen_lock:
                 seen.extend(local)
 
+        def guarded(work) -> None:
+            try:
+                work()
+            except BaseException as e:
+                with seen_lock:
+                    failures.append(e)
+
         with patch(_POST, side_effect=_post):
             threads = [
-                threading.Thread(target=rest_worker if i % 2 else ws_worker)
+                threading.Thread(
+                    target=guarded,
+                    args=(rest_worker if i % 2 else ws_worker,),
+                )
                 for i in range(8)
             ]
             for t in threads:
@@ -228,6 +345,8 @@ class TestDefaultSharedGenerator:
             for t in threads:
                 t.join(timeout=60)
 
+        assert not any(t.is_alive() for t in threads)
+        assert failures == []
         all_nonces = seen + [int(n) for n in captured]
         assert len(all_nonces) == 8 * 200
         assert len(set(all_nonces)) == len(all_nonces)

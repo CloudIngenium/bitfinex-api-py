@@ -44,9 +44,10 @@ def resolve_nonce(provider: NonceProvider | None) -> int:
     """The nonce for the next signature: from ``provider`` when one is set,
     else from the process-wide generator.
 
-    Raises NonceProviderError, before anything is signed or sent, when the
-    provider raises or returns anything but a positive int (a bool is not
-    one).
+    Raises NonceProviderError, before anything is signed, when the provider
+    raises or returns anything but a positive int (a bool is not one). An
+    int subclass is judged and returned by its plain int value: its own
+    __int__, __le__ or __str__ never runs.
     """
     if provider is None:
         return next_nonce()
@@ -58,11 +59,27 @@ def resolve_nonce(provider: NonceProvider | None) -> int:
             f"The nonce provider raised {type(e).__name__}: {e}"
         ) from e
 
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int):
         raise NonceProviderError(
             "The nonce provider must return a positive int, "
             f"got {value!r} ({type(value).__name__})."
         )
 
-    # A plain int, so an int subclass cannot change how it is rendered.
-    return int(value)
+    # A plain int first, through int's own slot: an int subclass's own
+    # __int__, __le__ or __str__ can neither fake a positive value nor
+    # change how the nonce is rendered.
+    try:
+        plain = int.__int__(value)
+    except Exception as e:
+        raise NonceProviderError(
+            "The nonce provider returned an int that cannot be converted "
+            f"({type(value).__name__}): {type(e).__name__}: {e}"
+        ) from e
+
+    if plain <= 0:
+        raise NonceProviderError(
+            "The nonce provider must return a positive int, "
+            f"got {plain} ({type(value).__name__})."
+        )
+
+    return plain
