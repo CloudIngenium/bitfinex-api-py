@@ -62,6 +62,33 @@ bfx = Client(
 )
 ```
 
+### Nonces: one signer per key, or one shared nonce source
+
+Bitfinex keeps one nonce counter per API key and rejects any request whose nonce is not greater than the last one it accepted (error `10114`, raised as `bfxapi.rest.exceptions.NonceError`).
+The client's REST requests and its WebSocket authentication share one process-wide monotonic nonce generator, so they never collide with each other.
+Anything else that signs with the same key (your own REST or WebSocket code, another `Client` in another process) has its own counter and can collide with them.
+
+Either use **one API key per process**, or inject **one shared, monotonic, thread-safe `nonce_provider`** into every component that signs with that key:
+
+```python
+bfx = Client(
+    [...],
+    api_key=os.getenv("BFX_API_KEY"),
+    api_secret=os.getenv("BFX_API_SECRET"),
+    nonce_provider=shared_nonce_source,  # () -> int, strictly increasing
+)
+```
+
+A provider must always return a value above any nonce the key has already used, not only above its own last value.
+The default generator issues microsecond nonces (about `1.7e15`), so switching a key that has already signed with it to a millisecond provider fails every signed call with `10114` until the provider catches up.
+
+A stale nonce surfaces differently per transport: on REST it raises `bfxapi.rest.exceptions.NonceError`; on WebSocket, Bitfinex rejects the auth message and the client raises `bfxapi.exceptions.InvalidCredentialError` ("Can't authenticate…").
+
+If the provider raises or returns anything but a positive `int`, the call fails with `bfxapi.exceptions.NonceProviderError` before anything is signed.
+On REST, nothing is sent to Bitfinex.
+On WebSocket, the socket has already connected and the `open` event has fired; only the auth message is held back.
+The error also ends the WebSocket client for good: it is not an error the client reconnects on, so `start()` raises it.
+
 ### Warning
 
 Remember to not share your API-KEYs and API-SECRETs with anyone. \

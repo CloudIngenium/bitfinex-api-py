@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import re
-import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from urllib3.exceptions import MaxRetryError, NewConnectionError
 from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_decoder import JSONDecoder, _RawKeysJSONDecoder
 from bfxapi._utils.json_encoder import _FiniteJSONEncoder, _NonFiniteNumber
+from bfxapi._utils.nonce import NonceProvider, next_nonce, resolve_nonce
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.rest.exceptions import (
     ApiRateLimitError,
@@ -49,20 +49,13 @@ def _encode_body(body: Any | None) -> str | None:
         raise NonFiniteNumberError(str(e), value=e.value) from e
 
 
-_NONCE_LOCK = threading.Lock()
-_NONCE_LAST = 0
-
-
 def _next_nonce() -> str:
     """Monotonic microsecond nonce. Guards against duplicates when two calls
-    hit the same microsecond tick under concurrent use (H8 fix)."""
-    global _NONCE_LAST
-    with _NONCE_LOCK:
-        candidate = time.time_ns() // 1_000
-        if candidate <= _NONCE_LAST:
-            candidate = _NONCE_LAST + 1
-        _NONCE_LAST = candidate
-    return str(candidate)
+    hit the same microsecond tick under concurrent use (H8 fix).
+
+    The process-wide generator in `bfxapi._utils.nonce`, which the
+    WebSocket auth message shares, so the two never issue the same nonce."""
+    return str(next_nonce())
 
 
 def _parse_int(value: str | None) -> int | None:
@@ -211,8 +204,11 @@ class Middleware:
         api_secret: str | None = None,
         *,
         lossless_financial_decode: bool = False,
+        nonce_provider: NonceProvider | None = None,
     ):
         self.__host = host
+        # None: the process-wide generator the WebSocket auth shares.
+        self.__nonce_provider = nonce_provider
         self.__decode_options = financial_decode_options(
             lossless_financial_decode
         )
@@ -422,7 +418,11 @@ class Middleware:
     ) -> dict[str, str]:
         assert self.__api_key and self.__api_secret
 
-        nonce = _next_nonce()
+        # NonceProviderError here leaves before anything is signed or sent.
+        if self.__nonce_provider is None:
+            nonce = _next_nonce()
+        else:
+            nonce = str(resolve_nonce(self.__nonce_provider))
 
         if not data:
             message = f"/api/v2/{endpoint}{nonce}"

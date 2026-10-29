@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from bfxapi._utils.logging import ColorLogger
@@ -29,6 +30,7 @@ class Client:
         decimal_mode: bool = False,
         lossless_financial_decode: bool = False,
         dms: int | None = None,
+        nonce_provider: Callable[[], int] | None = None,
     ) -> None:
         """
         Args:
@@ -37,7 +39,27 @@ class Client:
             dms: Dead-man switch flag for the authenticated WebSocket
                 (Bitfinex accepts 4: cancel all orders when the socket
                 closes). Sent on every (re)authentication.
+            nonce_provider: A callable returning the next nonce, a positive
+                int, for every signed REST request and every WebSocket
+                authentication of this client. Bitfinex keeps one nonce
+                counter per API key and rejects a nonce that is not greater
+                than the last one it accepted (error 10114, `NonceError`).
+                With None (the default), REST and WebSocket share one
+                process-wide monotonic microsecond generator, which is
+                enough when this library is the only signer of the key.
+                Use one API key per process, or pass the same shared,
+                monotonic, thread-safe provider to every component that
+                signs with the key (this client, your own REST or WebSocket
+                code, other clients). If the provider raises or returns
+                anything but a positive int, the call fails with
+                `bfxapi.exceptions.NonceProviderError` before anything is
+                signed or sent.
         """
+        if nonce_provider is not None and not callable(nonce_provider):
+            raise TypeError(
+                "nonce_provider must be a callable returning an int, "
+                f"got {type(nonce_provider).__name__}."
+            )
         if lossless_financial_decode and decimal_mode:
             # Two decoders for the same numbers: the lossless one would win
             # and `decimal_mode` would be dropped without a word.
@@ -75,6 +97,7 @@ class Client:
             api_secret,
             lossless_financial_decode=lossless_financial_decode,
             decimal_mode=scoped_decimal_mode,
+            nonce_provider=nonce_provider,
         )
 
         logger = ColorLogger("bfxapi", level="INFO")
@@ -89,4 +112,5 @@ class Client:
             logger=logger,
             lossless_financial_decode=lossless_financial_decode,
             decimal_mode=scoped_decimal_mode,
+            nonce_provider=nonce_provider,
         )
