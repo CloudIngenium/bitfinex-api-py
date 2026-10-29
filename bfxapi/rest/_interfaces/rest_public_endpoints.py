@@ -1,6 +1,7 @@
 from decimal import Decimal
 from typing import Any, Literal, cast
 
+from bfxapi._utils.json_encoder import _plain_decimal
 from bfxapi.rest._interface import Interface
 from bfxapi.types import (
     Candle,
@@ -57,14 +58,43 @@ def _candle_key(
     return key
 
 
+def _query_value(value: str | int | float | Decimal) -> str:
+    # str() would send 0.00001 as "1e-05"; floats and Decimals go out as
+    # plain decimals instead. Strings, ints and bools keep their str().
+    if isinstance(value, float | Decimal):
+        return _plain_decimal(value)
+    return str(value)
+
+
 def _query(**values: str | int | float | Decimal | None) -> dict[str, str]:
-    """Query-string params: None dropped, numbers sent as their text."""
+    """Query-string params: None dropped, numbers sent as plain decimals.
+
+    Raises ValueError for a NaN or infinite float/Decimal, before any request.
+    """
     return {
-        key: str(value) for key, value in values.items() if value is not None
+        key: _query_value(value)
+        for key, value in values.items()
+        if value is not None
     }
 
 
 class RestPublicEndpoints(Interface):
+    """Public (unauthenticated) REST endpoints.
+
+    Built through ``Client``, every call parses under that Client's
+    ``decimal_mode``. Constructed directly with ``decimal_mode=None`` (the
+    default), the group sets no decimal-mode scope of its own: each call
+    parses under whatever scope is active where it is made. Called from a
+    handler of a WebSocket data event (channel updates and account events,
+    which the WebSocket handlers emit inside their own
+    ``decimal_mode_scope``), that is the emitting Client's ``decimal_mode``;
+    an async handler inherits it too, but work handed to an executor does
+    not. Called from a lifecycle event (``open``, ``authenticated``,
+    ``subscribed``, ``disconnected``, ...) or anywhere else, it is the
+    process-wide default from ``set_decimal_mode``. Pass
+    ``decimal_mode=True/False`` to pin it.
+    """
+
     def conf(self, config: str) -> Any:
         return self._m.get(f"conf/{config}")[0]
 

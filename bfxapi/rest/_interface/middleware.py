@@ -16,7 +16,7 @@ from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from bfxapi._utils.financial_json import financial_decode_options
 from bfxapi._utils.json_decoder import JSONDecoder
-from bfxapi._utils.json_encoder import JSONEncoder
+from bfxapi._utils.json_encoder import _FiniteJSONEncoder
 from bfxapi.exceptions import InvalidCredentialError
 from bfxapi.rest.exceptions import (
     ApiRateLimitError,
@@ -239,7 +239,7 @@ class Middleware:
         body: Any | None = None,
         params: "_Params | None" = None,
     ) -> Any:
-        _body = body and json.dumps(body, cls=JSONEncoder) or None
+        _body = body and json.dumps(body, cls=_FiniteJSONEncoder) or None
         write = _is_write("POST", endpoint)
 
         headers = {
