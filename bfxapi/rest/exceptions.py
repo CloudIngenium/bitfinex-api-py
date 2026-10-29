@@ -59,6 +59,7 @@ class NonFiniteNumberError(RequestParameterError, ValueError):
 
     Attributes:
         raw: The non-finite value that was rejected.
+        value: The same object as `raw`, under the constructor's name.
     """
 
     retryable: bool = False
@@ -66,6 +67,10 @@ class NonFiniteNumberError(RequestParameterError, ValueError):
 
     def __init__(self, message: str, *, value: Any = None) -> None:
         super().__init__(message, raw=value)
+
+    @property
+    def value(self) -> Any:
+        return self.raw
 
 
 class GenericError(BfxApiError):

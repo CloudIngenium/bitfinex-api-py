@@ -43,6 +43,12 @@ class _NonFiniteNumber(ValueError):
         super().__init__(f"Bitfinex accepts finite numbers only, got {value!r}")
         self.value = value
 
+    def __reduce__(
+        self,
+    ) -> tuple[type["_NonFiniteNumber"], tuple[float | Decimal]]:
+        # Unpickling calls cls(*args); args holds the message, not the value.
+        return (type(self), (self.value,))
+
 
 def _require_finite(value: float | Decimal) -> Decimal:
     number = _as_decimal(value)

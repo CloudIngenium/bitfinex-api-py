@@ -7,6 +7,7 @@ NonFiniteNumberError that existing ``except ValueError`` and ``except
 RequestParameterError`` / ``BfxApiError`` clauses both still catch.
 """
 
+import copy
 import json
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -274,6 +275,38 @@ class TestJsonBody:
             )
         _assert_non_finite_error(caught.value, value)
         mock_post.assert_not_called()
+
+    @patch("bfxapi.rest._interface.middleware.requests.post")
+    def test_post_rejects_non_finite_before_signing(self, mock_post):
+        # The body is encoded before the auth headers are built, so a
+        # rejected value never consumes a nonce or gets signed.
+        m = Middleware(
+            "https://api.example.com", api_key="key", api_secret="secret"
+        )
+        with (
+            patch.object(
+                Middleware, "_Middleware__get_authentication_headers"
+            ) as sign,
+            pytest.raises(NonFiniteNumberError),
+        ):
+            m.post("auth/w/order/submit", body={"amount": float("nan")})
+        sign.assert_not_called()
+        mock_post.assert_not_called()
+
+    def test_errors_survive_reduce_round_trip(self):
+        # deepcopy rebuilds through __reduce_ex__, the protocol pickle uses
+        # (e.g. to return an error from a process pool).
+        public = NonFiniteNumberError("not finite", value=Decimal("Infinity"))
+        restored = copy.deepcopy(public)
+        assert type(restored) is NonFiniteNumberError
+        assert str(restored) == "not finite"
+        assert restored.raw == Decimal("Infinity")
+        assert restored.value == Decimal("Infinity")
+
+        internal = _NonFiniteNumber(Decimal("NaN"))
+        restored_internal = copy.deepcopy(internal)
+        assert str(restored_internal) == str(internal)
+        assert restored_internal.value.is_nan()
 
     @patch("bfxapi.rest._interface.middleware.requests.post")
     def test_post_non_finite_caught_by_existing_except_clauses(self, mock_post):
