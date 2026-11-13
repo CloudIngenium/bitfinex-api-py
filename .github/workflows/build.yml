@@ -67,3 +67,28 @@ jobs:
         run: python -m pytest tests/ -v
       - name: Run mypy
         run: mypy bfxapi/
+
+  # Python 3.15, experimental and NON-BLOCKING: evidence for moving BfxLendingBot
+  # to 3.15 (its plan wants this leg green 7 days in a row). It is its own job,
+  # not a matrix entry, so `test` above never reads its result: a red 3.15 run
+  # cannot fail the required check, whatever GitHub reports for a matrix that
+  # mixes continue-on-error legs.
+  test-py315:
+    name: test (3.15, experimental)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+      - name: Set up Python 3.15
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v6.2.0
+        with:
+          python-version: "3.15"
+          allow-prereleases: true
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Verify import
+        run: python -c "import bfxapi; print('Import successful')"
+      - name: Run tests with coverage
+        run: python -m pytest tests/ -v
+      - name: Run mypy
+        run: mypy bfxapi/
