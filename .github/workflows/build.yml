@@ -19,7 +19,19 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # Install from the committed uv.lock, not a fresh resolve. uv is not in the
+        # action pin catalog (no setup-uv), so it comes from pip at the version that
+        # wrote the lock. --locked fails when pyproject.toml and uv.lock disagree.
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Lock drift check (uv.lock matches pyproject.toml)
+        run: |
+          uv lock --check || {
+            echo "::error file=uv.lock::uv.lock is out of date with pyproject.toml (a dependency bump without a lock refresh). Run 'uv lock' and commit uv.lock."
+            exit 1
+          }
       # tests/ is linted too. It was not until 2026-09-26, and the drift was
       # already there: an UP035 and an unsorted import block sat in
       # tests/test_wire_contract.py from the day it was written, invisible
@@ -60,7 +72,13 @@ jobs:
         with:
           python-version: "${{ matrix.python-version }}"
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # Install from the committed uv.lock, not a fresh resolve. uv is not in the
+        # action pin catalog (no setup-uv), so it comes from pip at the version that
+        # wrote the lock. --locked fails when pyproject.toml and uv.lock disagree.
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Verify import
         run: python -c "import bfxapi; print('Import successful')"
       - name: Run tests with coverage
@@ -85,7 +103,13 @@ jobs:
           python-version: "3.15"
           allow-prereleases: true
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # Install from the committed uv.lock, not a fresh resolve. uv is not in the
+        # action pin catalog (no setup-uv), so it comes from pip at the version that
+        # wrote the lock. --locked fails when pyproject.toml and uv.lock disagree.
+        run: |
+          python -m pip install uv==0.13.7
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Verify import
         run: python -c "import bfxapi; print('Import successful')"
       - name: Run tests with coverage
